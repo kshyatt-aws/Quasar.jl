@@ -1,0 +1,3 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+Quasar = "86e06105-936e-439e-acf0-7687560b0bd9"
