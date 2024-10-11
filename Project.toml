@@ -1,0 +1,33 @@
+name = "Quasar"
+uuid = "86e06105-936e-439e-acf0-7687560b0bd9"
+authors = ["Katharine Hyatt <hyatkath@amazon.com> and contributors"]
+version = "0.0.1"
+
+[deps]
+AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
+Automa = "67c07d97-cdcb-5c2c-af73-a7f9c32a568b"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+
+[compat]
+AbstractTrees = "0.4.5"
+Aqua = "0.8"
+Automa = "1.0.4"
+DataStructures = "0.18.20"
+Dates = "1"
+LinearAlgebra = "1"
+PrecompileTools = "1.2.1"
+Statistics = "1"
+Test = "1"
+julia = "1.6"
+
+[extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "Aqua", "Dates", "LinearAlgebra", "Statistics"]
