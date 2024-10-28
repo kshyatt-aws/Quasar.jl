@@ -333,20 +333,20 @@ Quasar.builtin_gates[] = complex_builtin_gates
             @test visitor.classical_defs["b"].val == to_value
         end
     end
-    @testset "Numbers $qasm_str" for (qasm_str, var_name, output_val) in (("float[32] a = 1.24e-3;", "a", 1.24e-3),
-                                                                          ("complex[float] b = 1-0.23im;", "b", 1-0.23im),
-                                                                          ("const bit c = \"0\";", "c", falses(1)),
-                                                                          ("bool d = false;", "d", false),
-                                                                          ("complex[float] e = -0.23+2im;", "e", -0.23+2im),
-                                                                          ("uint f = 0x123456789abcdef;", "f", 0x123456789abcdef),
-                                                                          ("int g = 0o010;", "g", 0o010),
-                                                                          ("float[64] h = 2*π;", "h", 2π),
-                                                                          ("float[64] i = τ/2;", "i", Float64(π)),
-                                                                          ("complex[float] j = 0.23im;", "j", 0.23im),
-                                                                          ("complex[float] k = -0.23im;", "k", -0.23im),
-                                                                          ("complex[float] l = 2im;", "l", 2*im),
-                                                                          ("complex[float] m = -0.23 + -2.0im;", "m", -0.23-2.0*im),
-                                                                         )
+    @testset "Numbers $qasm_str" for (qasm_str, var_name, output_val, type_name) in (("float[32] a = 1.24e-3;", "a", 1.24e-3, "SizedFloat{32}"),
+                                                                                     ("complex[float] b = 1-0.23im;", "b", 1-0.23im, "SizedComplex{-1}"),
+                                                                                     ("bit c = \"0\";", "c", falses(1), "SizedBitVector{-1}"),
+                                                                                     ("bool d = false;", "d", false, "Bool"),
+                                                                                     ("complex[float] e = -0.23+2im;", "e", -0.23+2im, "SizedComplex{-1}"),
+                                                                                     ("uint f = 0x123456789abcdef;", "f", 0x123456789abcdef, "SizedUInt{-1}"),
+                                                                                     ("int g = 0o010;", "g", 0o010, "SizedInt{-1}"),
+                                                                                     ("float[64] h = 2*π;", "h", 2π, "SizedFloat{64}"),
+                                                                                     ("float[64] i = τ/2;", "i", Float64(π), "SizedFloat{64}"),
+                                                                                     ("complex[float] j = 0.23im;", "j", 0.23im, "SizedComplex{-1}"),
+                                                                                     ("complex[float] k = -0.23im;", "k", -0.23im, "SizedComplex{-1}"),
+                                                                                     ("complex[float] l = 2im;", "l", 2*im, "SizedComplex{-1}"),
+                                                                                     ("complex[float] m = -0.23 + -2.0im;", "m", -0.23-2.0*im, "SizedComplex{-1}"),
+                                                                                    )
 
 
         qasm = """
@@ -356,6 +356,17 @@ Quasar.builtin_gates[] = complex_builtin_gates
         visitor = QasmProgramVisitor()
         visitor(parsed)
         @test visitor.classical_defs[var_name].val == output_val
+        @test startswith(sprint(show, parsed), """
+        QasmExpression :program
+        └─ QasmExpression :classical_declaration
+           ├─ QasmExpression :classical_type
+           │  └─ $type_name
+           └─ QasmExpression :classical_assignment
+              └─ QasmExpression :binary_op
+                 ├─ :(=)
+                 ├─ QasmExpression :identifier
+                 │  └─ "$var_name"
+        """)
     end
     @testset "Qubit identifiers" begin
         qasm = """

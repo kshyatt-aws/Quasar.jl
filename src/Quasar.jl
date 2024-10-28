@@ -309,17 +309,23 @@ end
 Base.length(s::SizedBitVector) = s.size
 Base.size(s::SizedBitVector) = (s.size,)
 Base.show(io::IO, s::SizedBitVector) = print(io, "SizedBitVector{$(s.size.args[end])}")
+Base.iterate(s::SizedBitVector) = nothing
+Base.iterate(s::SizedBitVector, ::Nothing) = nothing
 struct SizedInt <: Integer
     size::QasmExpression
     SizedInt(size::QasmExpression) = new(size)
     SizedInt(sint::SizedInt) = new(sint.size)
 end
+Base.iterate(s::SizedInt) = nothing
+Base.iterate(s::SizedInt, ::Nothing) = nothing
 Base.show(io::IO, s::SizedInt) = print(io, "SizedInt{$(s.size.args[end])}")
 struct SizedUInt <: Unsigned 
     size::QasmExpression
     SizedUInt(size::QasmExpression) = new(size)
     SizedUInt(suint::SizedUInt) = new(suint.size)
 end
+Base.iterate(s::SizedUInt) = nothing
+Base.iterate(s::SizedUInt, ::Nothing) = nothing
 Base.show(io::IO, s::SizedUInt) = print(io, "SizedUInt{$(s.size.args[end])}")
 struct SizedFloat <: AbstractFloat
     size::QasmExpression
@@ -332,12 +338,16 @@ struct SizedAngle <: AbstractFloat
     SizedAngle(size::QasmExpression) = new(size)
     SizedAngle(sangle::SizedAngle) = new(sangle.size)
 end
+Base.iterate(s::SizedAngle) = nothing
+Base.iterate(s::SizedAngle, ::Nothing) = nothing
 Base.show(io::IO, s::SizedAngle) = print(io, "SizedAngle{$(s.size.args[end])}")
 struct SizedComplex <: Number
     size::QasmExpression
     SizedComplex(size::QasmExpression) = new(size)
     SizedComplex(scomplex::SizedComplex) = new(scomplex.size)
 end
+Base.iterate(s::SizedComplex) = nothing
+Base.iterate(s::SizedComplex, ::Nothing) = nothing
 Base.show(io::IO, s::SizedComplex) = print(io, "SizedComplex{$(s.size.args[end])}")
 
 struct SizedArray{T,N} <: AbstractArray{T, N} 
@@ -352,10 +362,15 @@ function SizedArray(eltype::QasmExpression, size::QasmExpression)
     end
     return SizedArray(eltype.args[1], arr_size)
 end
+Base.iterate(s::SizedArray) = nothing
+Base.iterate(s::SizedArray, ::Nothing) = nothing
 Base.show(io::IO, s::SizedArray{T, N}) where {T, N} = print(io, "SizedArray{$(sprint(show, s.type)), $N}")
 Base.size(a::SizedArray{T, N}, dim::Int=0) where {T, N} = a.size[dim+1]
 
 const SizedNumber = Union{SizedComplex, SizedAngle, SizedFloat, SizedInt, SizedUInt}
+if v"1.9" <= VERSION < v"1.11" 
+    Base.Iterators.iterlength(s::Union{SizedNumber, SizedBitVector, SizedArray}) = -1
+end
 
 function parse_classical_type(tokens, stack, start, qasm)
     is_sized  = length(tokens) > 1 && tokens[2][end] == lbracket
