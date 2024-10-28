@@ -368,6 +368,9 @@ Base.show(io::IO, s::SizedArray{T, N}) where {T, N} = print(io, "SizedArray{$(sp
 Base.size(a::SizedArray{T, N}, dim::Int=0) where {T, N} = a.size[dim+1]
 
 const SizedNumber = Union{SizedComplex, SizedAngle, SizedFloat, SizedInt, SizedUInt}
+if v"1.9" <= VERSION < v"1.11" 
+    Base.Iterators.iterlength(s::Union{SizedNumber, SizedBitVector, SizedArray}) = -1
+end
 
 function parse_classical_type(tokens, stack, start, qasm)
     is_sized  = length(tokens) > 1 && tokens[2][end] == lbracket
