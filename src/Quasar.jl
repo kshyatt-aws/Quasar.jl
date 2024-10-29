@@ -109,15 +109,20 @@ const qasm_tokens = [
         :forbidden_keyword => re"cal|defcal|extern",
 ]
 
-const dt_type = Ref{DataType}()
+const dt_type       = Ref{DataType}()
 const builtin_gates = Ref{Function}()
+const visit_pragma  = Ref{Function}()
+const parse_pragma  = Ref{Function}()
+
+function basic_parse_pragma end
+function basic_visit_pragma end
 
 function __init__()
     dt_type[] = Nanosecond
-    builtin_gates[] = basic_builtin_gates 
+    builtin_gates[] = basic_builtin_gates
+    visit_pragma[]  = basic_visit_pragma
+    parse_pragma[]  = basic_parse_pragma
 end
-function parse_pragma end
-function visit_pragma end
 
 @eval @enum Token error $(first.(qasm_tokens)...)
 make_tokenizer((error,
@@ -806,7 +811,7 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             closing = findfirst(triplet->triplet[end] == newline, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final newline for #pragma", stack, start, qasm))
             pragma_tokens = splice!(clean_tokens, 1:closing-1)
-            push!(stack, parse_pragma(pragma_tokens, stack, start, qasm))
+            push!(stack, parse_pragma[](pragma_tokens, stack, start, qasm))
         elseif token == include_token
             closing       = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for include", stack, start, qasm))
@@ -975,8 +980,42 @@ struct Qubit
     size::Int
 end
 
+"""
+    InstructionArgument
+
+Union type of `Symbol`, `Dates.Period`, `Real`, `Matrix{ComplexF64}` which
+represents a possible argument to a [`CircuitInstruction`](@ref).
+"""
 const InstructionArgument = Union{Symbol, Dates.Period, Real, Matrix{ComplexF64}}
+
+"""
+    CircuitInstruction
+
+A `NamedTuple` representing a circuit instruction (a gate, a noise operation, a timing operation). Fields are:
+
+- `type::String` - the name of the operation (e.g. `rx`)
+- `arguments::Vector{InstructionArgument}` - arguments, if any, to the operation (e.g. `π` for an angled gate)
+- `targets::Vector{Int}` - qubit targets for the operation, **including control qubits, if any**
+- `controls::Vector{Pair{Int, Int}}` - control qubits and bit-values for the operation, so that a `ctrl @ x 0, 2;` could have `controls = [0=>1]` and `negctrl @ x 0, 2;` could have `controls = [0=>0]`.
+- `exponent::Float64` - exponent to which the operation is raised, if any
+
+`CircuitInstruction`s can be used with a package like [`StructTypes.jl`](https://github.com/JuliaData/StructTypes.jl) to build the
+actual types of your package from these `NamedTuple`s.
+"""
 const CircuitInstruction = @NamedTuple begin type::String; arguments::Vector{InstructionArgument}; targets::Vector{Int}; controls::Vector{Pair{Int, Int}}; exponent::Float64 end
+"""
+    CircuitResult
+
+A `NamedTuple` representing a circuit result (e.g. an expectation value). Fields are:
+
+- `type::Symbol` - the name of the result type (e.g. `:variance`)
+- `operator::Vector{Union{String, Matrix{ComplexF64}}}` - the operator to measure, if applicable
+- `targets::Vector{Int}` - qubit targets for the result
+- `states::Vector{String}` - vector of bitstrings to measure the amplitudes of, if the result type is an `:amplitude` 
+
+`CircuitResult`s can be used with a package like [`StructTypes.jl`](https://github.com/JuliaData/StructTypes.jl) to build the
+actual result objects of your package from these `NamedTuple`s.
+"""
 const CircuitResult = @NamedTuple begin type::Symbol; operator::Vector{Union{String, Matrix{ComplexF64}}}; targets::Vector{Int}; states::Vector{String}; end
 
 abstract type AbstractGateDefinition end
@@ -1726,7 +1765,7 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
         full_function_def    = FunctionDefinition(function_name, function_arguments, function_body, function_return_type)
         v.function_defs[function_name] = full_function_def
     elseif head(program_expr) == :pragma
-        visit_pragma(v, program_expr)
+        visit_pragma[](v, program_expr)
     elseif head(program_expr) ∈ (:integer_literal, :float_literal, :string_literal, :complex_literal, :irrational_literal, :boolean_literal, :duration_literal)
         return program_expr.args[1]
     elseif head(program_expr) == :array_literal
