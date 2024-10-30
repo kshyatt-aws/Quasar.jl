@@ -1819,4 +1819,6 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
     return v
 end
 
+include("precompile.jl")
+
 end
