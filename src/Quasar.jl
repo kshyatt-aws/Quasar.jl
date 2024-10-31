@@ -105,8 +105,14 @@ const qasm_tokens = [
         :spaces          => re"[\t ]+",
         :classical_type    => re"bool|uint|int|float|angle|complex|array|bit|stretch|duration",
         :durationof_token  => re"durationof", # this MUST be lower than classical_type to preempt duration
+        :port_token        => re"port",
+        :frame_token       => re"frame"
+        :waveform_token    => re"waveform"
+        :pulse_function    => re"newframe|shift_phase|get_phase|set_phase|get_frequency|set_frequency|shift_frequency|sum|mix|scale|phase_shift|play|set_frequency",
         :duration_literal  => (float | integer) * re"dt|ns|us|ms|s|\xce\xbc\x73", # transcode'd μs
-        :forbidden_keyword => re"cal|defcal|extern",
+        :cal_token         => re"cal",
+        :defcal_token      => re"defcal",
+        :extern_token      => re"extern",
 ]
 
 const dt_type       = Ref{DataType}()
@@ -304,6 +310,21 @@ function parse_gate_def(tokens, stack, start, qasm)
     expr = QasmExpression(:gate_definition, gate_name_id, gate_args, target_expr)
     parse_block_body(expr, tokens, stack, start, qasm)
     return expr
+end
+
+struct Port end
+struct Frame
+    port::Port
+    frequency::Float64
+    phase::Float64
+end
+
+abstract type AbstractWaveform end
+struct ArrayWaveform <: AbstractWaveform
+    values::Vector{ComplexF64}
+end
+struct FunctionWaveform <: AbstractWaveform
+    generator::Function
 end
 
 struct SizedBitVector <: AbstractArray{Bool, 1}
@@ -687,6 +708,9 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         token_name = parse_bracketed_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
     elseif start_token[end] == classical_type 
         token_name = parse_classical_type(pushfirst!(tokens, start_token), stack, start, qasm)
+    elseif start_token[end] == waveform_token || start_token[end] == frame_token
+        pulse_name = parse_identifier(start_token, qasm)
+        token_name = QasmExpression(Symbol(name(pulse_name)))
     elseif start_token[end] ∈ (string_token, integer_token, float_token, hex, oct, bin, irrational, dot, boolean, duration_literal)
         token_name = parse_literal(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] ∈ (mutable, readonly, const_token)
@@ -741,7 +765,7 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         header = is_mutable ? :classical_declaration : :const_declaration
         expr   = QasmExpression(header, type)
         push!(expr, parse_expression(tokens, stack, start, qasm))
-    elseif start_token[end] == classical_type && (next_token[end] ∈ (lbracket, identifier))
+    elseif start_token[end] ∈ (classical_type, frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
         expr = QasmExpression(:classical_declaration, token_name)
         push!(expr, parse_expression(tokens, stack, start, qasm))
     elseif start_token[end] == classical_type && next_token[end] == lparen
@@ -848,7 +872,7 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             raw_expr = parse_expression(splice!(clean_tokens, 1:closing), stack, start, qasm)
             expr = QasmExpression(:const_declaration, raw_expr.args)
             push!(stack, expr)
-        elseif token == classical_type 
+        elseif token == classical_type || token == frame_token || token == waveform_token
             closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for classical declaration", stack, start, qasm))
             line_tokens = pushfirst!(splice!(clean_tokens, 1:closing), (start, len, token))
