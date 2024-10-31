@@ -1,5 +1,3 @@
-using PrecompileTools
-
 @setup_workload begin
     # Putting some things in `setup` can reduce the size of the
     # precompile file and potentially make loading faster.
