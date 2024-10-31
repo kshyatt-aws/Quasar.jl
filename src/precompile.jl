@@ -23,8 +23,6 @@ using PrecompileTools
                    b[1] = measure q[1];
 
                    bell(q[0], q[1]);
-                   // h q[0], q[1];
-
                    int xx = 1;
                    xx = 3;
                    """
