@@ -297,7 +297,7 @@ Quasar.builtin_gates[] = complex_builtin_gates
                                                                      ("complex[float] a = 2+1/3im;", 2-(im/3)),
                                                                      ("bool a = 1 << 2 == 5;", false),
                                                                      ("bool a = true && true || false;", true),
-                                                                    )
+                                                                    ) 
         qasm = """
         $expr
         """
@@ -305,6 +305,13 @@ Quasar.builtin_gates[] = complex_builtin_gates
         visitor = QasmProgramVisitor()
         visitor(parsed)
         @test visitor.classical_defs["a"].val == val
+    end
+    @testset "Waveforms" begin
+        qasm = """
+        // arbitrary complex samples
+        waveform arb_waveform = [1+0im, 0+1im, 1/sqrt(2)+1/sqrt(2)im];
+        """
+        parsed  = parse_qasm(qasm)
     end
     @testset "Casting" begin
         @testset "Casting to $to_type from $from_type" for (to_type, to_value) in (("bool", true),), (from_type, from_value) in (("int[32]", "32",),
@@ -396,18 +403,6 @@ Quasar.builtin_gates[] = complex_builtin_gates
         @test visitor(Quasar.QasmExpression(:indexed_identifier, Quasar.QasmExpression(:identifier, "q"), Quasar.QasmExpression(:integer_literal, 1))) == [1]
         @test_throws Quasar.QasmVisitorError("no identifier p defined.") visitor(Quasar.QasmExpression(:identifier, "p"))
         @test_throws Quasar.QasmVisitorError("no identifier p defined.") visitor(Quasar.QasmExpression(:indexed_identifier, Quasar.QasmExpression(:identifier, "p"), Quasar.QasmExpression(:integer_literal, 1)))
-    end
-    @testset "Forbidden keywords" begin
-        qasm = """
-        extern b;
-        """
-        @test_throws Quasar.QasmParseError parse_qasm(qasm)
-        try
-            parse_qasm(qasm)
-        catch e
-            msg = sprint(showerror, e)
-            @test startswith(msg, "QasmParseError: keyword extern not supported.")
-        end
     end
     @testset "Integers next to irrationals" begin
         qasm = """

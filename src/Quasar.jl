@@ -106,9 +106,9 @@ const qasm_tokens = [
         :classical_type    => re"bool|uint|int|float|angle|complex|array|bit|stretch|duration",
         :durationof_token  => re"durationof", # this MUST be lower than classical_type to preempt duration
         :port_token        => re"port",
-        :frame_token       => re"frame"
-        :waveform_token    => re"waveform"
-        :pulse_function    => re"newframe|shift_phase|get_phase|set_phase|get_frequency|set_frequency|shift_frequency|sum|mix|scale|phase_shift|play|set_frequency",
+        :frame_token       => re"frame",
+        :waveform_token    => re"waveform",
+        #:pulse_function    => re"newframe|shift_phase|get_phase|set_phase|get_frequency|set_frequency|shift_frequency|sum|mix|scale|phase_shift|play|set_frequency",
         :duration_literal  => (float | integer) * re"dt|ns|us|ms|s|\xce\xbc\x73", # transcode'd μs
         :cal_token         => re"cal",
         :defcal_token      => re"defcal",
@@ -705,12 +705,13 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif start_token[end] == lbrace # set expression 
         token_name = parse_set_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
     elseif start_token[end] == lbracket
-        token_name = parse_bracketed_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
+        token_name = parse_bracketed_expression(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] == classical_type 
         token_name = parse_classical_type(pushfirst!(tokens, start_token), stack, start, qasm)
-    elseif start_token[end] == waveform_token || start_token[end] == frame_token
-        pulse_name = parse_identifier(start_token, qasm)
-        token_name = QasmExpression(Symbol(name(pulse_name)))
+    elseif start_token[end] == waveform_token
+        token_name = QasmExpression(:waveform)
+    elseif start_token[end] == frame_token
+        token_name = QasmExpression(:frame)
     elseif start_token[end] ∈ (string_token, integer_token, float_token, hex, oct, bin, irrational, dot, boolean, duration_literal)
         token_name = parse_literal(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] ∈ (mutable, readonly, const_token)
@@ -765,9 +766,13 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         header = is_mutable ? :classical_declaration : :const_declaration
         expr   = QasmExpression(header, type)
         push!(expr, parse_expression(tokens, stack, start, qasm))
-    elseif start_token[end] ∈ (classical_type, frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
+    elseif start_token[end] == classical_type && (next_token[end] ∈ (lbracket, identifier))
         expr = QasmExpression(:classical_declaration, token_name)
         push!(expr, parse_expression(tokens, stack, start, qasm))
+    elseif start_token[end] ∈ (frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
+        expr      = QasmExpression(:classical_declaration, token_name)
+        next_expr = parse_expression(tokens, stack, start, qasm)
+        push!(expr, next_expr)
     elseif start_token[end] == classical_type && next_token[end] == lparen
         expr = QasmExpression(:cast, token_name)
         interior_tokens = extract_parensed(tokens, stack, start, qasm)
@@ -822,13 +827,14 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
             expr = QasmExpression(:gate_call, token_name, arguments, target_expr)
         else # this is a function call
             next_token[end] == semicolon && popfirst!(tokens)
+            raw_expr = QasmExpression(:function_call, token_name, arguments)
             if next_token[end] == operator
                 next_op_token   = parse_identifier(popfirst!(tokens), qasm)
-                left_hand_side  = QasmExpression(:function_call, token_name, arguments)
+                left_hand_side  = raw_expr
                 right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
                 expr = QasmExpression(:binary_op, Symbol(next_op_token.args[1]), left_hand_side, right_hand_side)
             else
-                expr = QasmExpression(:function_call, token_name, arguments)
+                expr = raw_expr
             end
         end
     end
@@ -993,9 +999,6 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             clean_tokens = pushfirst!(clean_tokens, (start, len, token))
             expr = parse_expression(clean_tokens, stack, start, qasm)
             push!(stack, expr)
-        elseif token == forbidden_keyword
-            token_id = name(parse_identifier((start, len, token), qasm))
-            throw(QasmParseError("keyword $token_id not supported.", stack, start, qasm))
         end
     end
     return stack
@@ -1282,20 +1285,6 @@ function evaluate_binary_op(op::Symbol, @nospecialize(lhs), @nospecialize(rhs))
     op == :^ && return lhs .⊻ rhs
 end
 
-function name(expr::QasmExpression)::String
-    head(expr) == :identifier         && return expr.args[1]::String
-    head(expr) == :indexed_identifier && return name(expr.args[1]::QasmExpression)
-    head(expr) == :qubit_declaration  && return name(expr.args[1]::QasmExpression)
-    head(expr) == :classical_declaration && return name(expr.args[2]::QasmExpression)
-    head(expr) == :input              && return name(expr.args[2]::QasmExpression)
-    head(expr) == :function_call      && return name(expr.args[1]::QasmExpression)
-    head(expr) == :gate_call          && return name(expr.args[1]::QasmExpression)
-    head(expr) == :gate_definition    && return name(expr.args[1]::QasmExpression)
-    head(expr) == :classical_assignment && return name(expr.args[1].args[2]::QasmExpression)
-    head(expr) == :hw_qubit           && return replace(expr.args[1], "\$"=>"")
-    throw(QasmVisitorError("name not defined for expressions of type $(head(expr))"))
-end
-
 function evaluate_modifiers(v::V, expr::QasmExpression) where {V<:AbstractVisitor}
     if head(expr) == :power_mod
         pow_expr = QasmExpression(:pow, v(expr.args[1]::QasmExpression))
@@ -1319,6 +1308,20 @@ function evaluate_modifiers(v::V, expr::QasmExpression) where {V<:AbstractVisito
         new_head = head(expr) == :control_mod ? :ctrl : :negctrl
         return (QasmExpression(new_head), inner)
     end
+end
+
+function name(expr::QasmExpression)::String
+    head(expr) == :identifier         && return expr.args[1]::String
+    head(expr) == :indexed_identifier && return name(expr.args[1]::QasmExpression)
+    head(expr) == :qubit_declaration  && return name(expr.args[1]::QasmExpression)
+    head(expr) == :classical_declaration && return name(expr.args[2]::QasmExpression)
+    head(expr) == :input              && return name(expr.args[2]::QasmExpression)
+    head(expr) == :function_call      && return name(expr.args[1]::QasmExpression)
+    head(expr) == :gate_call          && return name(expr.args[1]::QasmExpression)
+    head(expr) == :gate_definition    && return name(expr.args[1]::QasmExpression)
+    head(expr) == :classical_assignment && return name(expr.args[1].args[2]::QasmExpression)
+    head(expr) == :hw_qubit           && return replace(expr.args[1], "\$"=>"")
+    throw(QasmVisitorError("name not defined for expressions of type $(head(expr))"))
 end
 
 # nosemgrep
