@@ -289,6 +289,23 @@ Quasar.builtin_gates[] = complex_builtin_gates
                                        (type="gphase", arguments=InstructionArgument[2*π], targets=[0, 1], controls=[0=>0, 1=>1], exponent=1.0),
                                       ]
     end
+    @testset "Operator precedence $expr -> $val" for (expr, val) in (("complex[float] a = 1/sqrt(2)+1/sqrt(2)im;", (1+im)/√2),
+                                                                     ("float a = 2*3 - 4*5;", 6-20),
+                                                                     ("float a = 2*(3 - 4)*5;", -10),
+                                                                     ("float a = 1/2+4;", 4.5),
+                                                                     ("int a = 2 + 3*4 - 5;", 14 - 5),
+                                                                     ("complex[float] a = 2+1/3im;", 2-(im/3)),
+                                                                     ("bool a = 1 << 2 == 5;", false),
+                                                                     ("bool a = true && true || false;", true),
+                                                                    )
+        qasm = """
+        $expr
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test visitor.classical_defs["a"].val == val
+    end
     @testset "Casting" begin
         @testset "Casting to $to_type from $from_type" for (to_type, to_value) in (("bool", true),), (from_type, from_value) in (("int[32]", "32",),
                                                                                                                               ("uint[16]", "1",),
