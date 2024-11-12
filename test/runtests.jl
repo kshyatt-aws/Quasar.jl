@@ -309,9 +309,19 @@ Quasar.builtin_gates[] = complex_builtin_gates
     @testset "Waveforms" begin
         qasm = """
         // arbitrary complex samples
-        waveform arb_waveform = [1+0im, 0+1im, 1/sqrt(2)+1/sqrt(2)im];
+        waveform arb_waveform = [1, 2, 3, 4];
         """
         parsed  = parse_qasm(qasm)
+        @test parsed == Quasar.QasmExpression(:program, Quasar.QasmExpression(:classical_declaration, Quasar.QasmExpression(:waveform), Quasar.QasmExpression(:classical_assignment, Quasar.QasmExpression(:binary_op, Symbol("="), Quasar.QasmExpression(:identifier, "arb_waveform"), Quasar.QasmExpression(:array_literal, Quasar.QasmExpression(:integer_literal, 1), Quasar.QasmExpression(:integer_literal, 2), Quasar.QasmExpression(:integer_literal, 3), Quasar.QasmExpression(:integer_literal, 4))))))
+        qasm = """
+        // arbitrary complex samples
+        extern gaussian(complex[float[size]] amp, duration d, duration sigma) -> waveform;
+        """
+        parsed  = parse_qasm(qasm)
+        @test Quasar.head(only(parsed.args)) == :function_definition
+        @test only(parsed.args).args[1] == Quasar.QasmExpression(:identifier, "gaussian")
+        @test only(parsed.args).args[3] == Quasar.QasmExpression(:waveform)
+        @test only(parsed.args).args[4] == Quasar.QasmExpression(:extern)
     end
     @testset "Casting" begin
         @testset "Casting to $to_type from $from_type" for (to_type, to_value) in (("bool", true),), (from_type, from_value) in (("int[32]", "32",),

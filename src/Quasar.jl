@@ -289,13 +289,23 @@ function parse_function_def(tokens, stack, start, qasm)
     has_return_type  = tokens[1][end] == arrow_token
     if has_return_type
         arrow = popfirst!(tokens)
-        tokens[1][end] == classical_type || throw(QasmParseError("function return type must be a classical type", stack, start, qasm))
-        return_type = parse_classical_type(tokens, stack, start, qasm)
+        if tokens[1][end] == classical_type
+            return_type = parse_classical_type(tokens, stack, start, qasm)
+        elseif tokens[1][end] == waveform_token
+            popfirst!(tokens)
+            return_type = QasmExpression(:waveform)
+        else
+            throw(QasmParseError("function return type must be a classical type or waveform", stack, start, qasm))
+        end
     else
         return_type = QasmExpression(:void)
     end
     expr = QasmExpression(:function_definition, function_name_id, arguments, return_type)
-    parse_block_body(expr, tokens, stack, start, qasm)
+    if !isempty(tokens)
+        parse_block_body(expr, tokens, stack, start, qasm)
+    else
+        push!(expr, QasmExpression(:extern))
+    end
     return expr
 end
 function parse_gate_def(tokens, stack, start, qasm)
@@ -875,15 +885,23 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
         elseif token == const_token
             closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for const declaration", stack, start, qasm))
-            raw_expr = parse_expression(splice!(clean_tokens, 1:closing), stack, start, qasm)
-            expr = QasmExpression(:const_declaration, raw_expr.args)
-            push!(stack, expr)
+            raw_expr  = parse_expression(splice!(clean_tokens, 1:closing), stack, start, qasm)
+            push!(stack, QasmExpression(:const_declaration, raw_expr.args))
         elseif token == classical_type || token == frame_token || token == waveform_token
-            closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            closing     = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for classical declaration", stack, start, qasm))
             line_tokens = pushfirst!(splice!(clean_tokens, 1:closing), (start, len, token))
             expr        = parse_expression(line_tokens, stack, start, qasm)
             push!(stack, expr)
+        elseif token == extern_token
+            closing     = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            isnothing(closing) && throw(QasmParseError("missing final semicolon for extern declaration", stack, start, qasm))
+            line_tokens = splice!(clean_tokens, 1:closing-1)
+            if first(line_tokens)[end] ∈ (port_token, frame_token)
+
+            else
+                push!(stack, parse_function_def(line_tokens, stack, start, qasm))
+            end
         elseif token == input
             closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for input", stack, start, qasm))
