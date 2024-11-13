@@ -23,3 +23,10 @@ const builtin_functions = Dict{String, Function}(
     "sqrt" => sqrt,
     "popcount" => popcount,
 )
+
+const builtin_pulse_functions = Dict{String, Function}("mix"=>((wf1, wf2)->broadcast(*, wf1, wf2)),
+                                                       "sum"=>((wf1, wf2)->broadcast(+, wf1, wf2)),
+                                                       "phase_shift"=>((wf, angle)->(wf .* exp(im*angle))),
+                                                       "scale"=>((wf, factor)->(wf .* factor)),
+                                                      )
+

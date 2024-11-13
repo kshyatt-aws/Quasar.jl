@@ -24,7 +24,7 @@ const first_letter   = re"[A-Za-z_]" | unicode
 const general_letter = first_letter | re"[0-9]" 
 
 const prefloat = re"[-+]?([0-9]+\.[0-9]*|[0-9]*\.[0-9]+)"
-const integer = re"[-]?[0-9]+"
+const integer = re"[0-9]+"
 const float   = prefloat | ((prefloat | re"[-+]?[0-9]+") * re"[eE][-+]?[0-9]+")
 
 const qasm_tokens = [
@@ -113,6 +113,7 @@ const qasm_tokens = [
         :cal_token         => re"cal",
         :defcal_token      => re"defcal",
         :extern_token      => re"extern",
+        :defcalgrammar_token => re"defcalgrammar",
 ]
 
 const dt_type       = Ref{DataType}()
@@ -124,7 +125,7 @@ function basic_parse_pragma end
 function basic_visit_pragma end
 
 function __init__()
-    dt_type[] = Nanosecond
+    dt_type[]       = Nanosecond
     builtin_gates[] = basic_builtin_gates
     visit_pragma[]  = basic_visit_pragma
     parse_pragma[]  = basic_parse_pragma
@@ -322,6 +323,20 @@ function parse_gate_def(tokens, stack, start, qasm)
     return expr
 end
 
+function parse_defcal(tokens, stack, start, qasm)
+    defcal_name = popfirst!(tokens)
+    defcal_name[end] == identifier || throw(QasmParseError("defcal must have a valid identifier as a name", stack, start, qasm))
+    defcal_name_id = parse_identifier(defcal_name, qasm)
+
+    defcal_args  = parse_arguments_list(tokens, stack, start, qasm)
+    qubit_tokens = splice!(tokens, 1:findfirst(triplet->triplet[end]==lbrace, tokens)-1)
+    push!(qubit_tokens, (-1, Int32(-1), semicolon))
+    target_expr = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
+    expr = QasmExpression(:defcal, defcal_name_id, defcal_args, target_expr)
+    parse_block_body(expr, tokens, stack, start, qasm)
+    return expr
+end
+
 struct Port end
 struct Frame
     port::Port
@@ -435,6 +450,8 @@ function parse_classical_type(tokens, stack, start, qasm)
         return QasmExpression(:classical_type, SizedUInt(size))
     elseif var_type == "float"
         return QasmExpression(:classical_type, SizedFloat(size))
+    elseif var_type == "angle"
+        return QasmExpression(:classical_type, SizedAngle(size))
     elseif var_type == "complex"
         return QasmExpression(:classical_type, SizedComplex(size))
     elseif var_type == "bool"
@@ -473,7 +490,7 @@ function parse_assignment_op(op_token, qasm)
     return binary_assignment_ops[op_string.args[1]::String]
 end
 
-parse_string_literal(token, qasm)  = QasmExpression(:string_literal, String(qasm[token[1]:token[1]+token[2]-1]))
+parse_string_literal(token, qasm)  = QasmExpression(:string_literal, String(codeunits(qasm)[token[1]:token[1]+token[2]-1]))
 parse_integer_literal(token, qasm) = QasmExpression(:integer_literal, tryparse(Int, qasm[token[1]:token[1]+token[2]-1]))
 parse_hex_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(UInt, qasm[token[1]:token[1]+token[2]-1]))
 parse_oct_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(Int, qasm[token[1]:token[1]+token[2]-1]))
@@ -711,7 +728,7 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif start_token[end] == continue_token
         token_name = QasmExpression(:continue)
     elseif start_token[end] == lparen # could be some kind of expression
-        token_name = parse_paren_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
+        token_name = parse_paren_expression(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] == lbrace # set expression 
         token_name = parse_set_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
     elseif start_token[end] == lbracket
@@ -810,10 +827,11 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif next_token[end] == operator
         op_token        = parse_identifier(popfirst!(tokens), qasm)
         left_hand_side  = token_name
+        right_hand_head = first(tokens)[end]
         right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
         op_symbol       = Symbol(op_token.args[1])
         raw_expr        = QasmExpression(:binary_op, op_symbol, token_name, right_hand_side)
-        if head(right_hand_side) == :binary_op && has_precedence(op_symbol, right_hand_side.args[1])
+        if head(right_hand_side) == :binary_op && has_precedence(op_symbol, right_hand_side.args[1]) && right_hand_head != lparen # parens pre-prempt precedence 
             rhs_op   = right_hand_side.args[1]
             new_lhs  = QasmExpression(:binary_op, op_symbol, left_hand_side, right_hand_side.args[2])
             new_rhs  = right_hand_side.args[end]
@@ -893,6 +911,18 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             line_tokens = pushfirst!(splice!(clean_tokens, 1:closing), (start, len, token))
             expr        = parse_expression(line_tokens, stack, start, qasm)
             push!(stack, expr)
+        elseif token == cal_token
+            expr = QasmExpression(:cal)
+            parse_block_body(expr, clean_tokens, stack, start, qasm)
+            push!(stack, expr)
+        elseif token == defcal_token
+            expr = parse_defcal(clean_tokens, stack, start, qasm)
+            push!(stack, expr)
+        elseif token == defcalgrammar_token
+            next_token = first(clean_tokens)
+            if next_token[end] != string_token || String(codeunits(qasm)[next_token[1]:next_token[1]+next_token[2]-1]) != "\"openpulse\""
+                throw(QasmParseError("only \"openpulse\" grammar is currently supported", stack, start, qasm))
+            end
         elseif token == extern_token
             closing     = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for extern declaration", stack, start, qasm))
