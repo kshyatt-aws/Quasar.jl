@@ -98,7 +98,7 @@ const qasm_tokens = [
         :hex_integer     => re"(0x|0X) ([0-9a-fA-F] _?)* [0-9a-fA-F]",
         :hardware_qubit  => re"$ [0-9]+",
         :line_comment    => re"//",
-        :block_comment   => re"/\* .*? \*/",
+        :block_comment   => re"/\*.*?\*/",
         :char            => '\'' * (re"[ -&(-~]" | ('\\' * re"[ -~]")) * '\'',
         :string_token    => '"' * rep(re"[ !#-~]" | re"\\\\\"") * '"' | '\'' * rep(re"[ -&(-~]" | ('\\' * re"[ -~]")) * '\'',
         :newline         => re"\r?\n",
@@ -1054,7 +1054,7 @@ end
 function parse_qasm(qasm::String, root=QasmExpression(:program))::QasmExpression
     raw_tokens   = tokenize(Token, qasm)
     clean_tokens = filter(triplet->triplet[3] ∉ (spaces, block_comment), collect(raw_tokens))
-    # add a final newline in case one is missing 
+    # add a final newline in case one is missing
     clean_tokens[end][end] == newline || push!(clean_tokens, (-1, Int32(-1), newline))
     stack = parse_qasm(clean_tokens, qasm, root)
     stack_exprs = convert(Vector{QasmExpression}, collect(Iterators.reverse(stack)))::Vector{QasmExpression}
