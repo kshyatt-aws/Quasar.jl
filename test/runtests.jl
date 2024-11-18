@@ -292,12 +292,14 @@ Quasar.builtin_gates[] = complex_builtin_gates
     @testset "Operator precedence $expr -> $val" for (expr, val) in (("complex[float] a = 1/sqrt(2)+1/sqrt(2)im;", (1+im)/√2),
                                                                      ("float a = 2*3 - 4*5;", 6-20),
                                                                      ("float a = 2*(3 - 4)*5;", -10),
+                                                                     ("int a = (3 - 4)*5;", -5),
+                                                                     ("int a = (3-4)*(5+2);", -7),
                                                                      ("float a = 1/2+4;", 4.5),
                                                                      ("int a = 2 + 3*4 - 5;", 14 - 5),
                                                                      ("complex[float] a = 2+1/3im;", 2-(im/3)),
                                                                      ("bool a = 1 << 2 == 5;", false),
                                                                      ("bool a = true && true || false;", true),
-                                                                    )
+                                                                    ) 
         qasm = """
         $expr
         """
@@ -305,6 +307,23 @@ Quasar.builtin_gates[] = complex_builtin_gates
         visitor = QasmProgramVisitor()
         visitor(parsed)
         @test visitor.classical_defs["a"].val == val
+    end
+    @testset "Waveforms" begin
+        qasm = """
+        // arbitrary complex samples
+        waveform arb_waveform = [1, 2, 3, 4];
+        """
+        parsed  = parse_qasm(qasm)
+        @test parsed == Quasar.QasmExpression(:program, Quasar.QasmExpression(:classical_declaration, Quasar.QasmExpression(:waveform), Quasar.QasmExpression(:classical_assignment, Quasar.QasmExpression(:binary_op, Symbol("="), Quasar.QasmExpression(:identifier, "arb_waveform"), Quasar.QasmExpression(:array_literal, Quasar.QasmExpression(:integer_literal, 1), Quasar.QasmExpression(:integer_literal, 2), Quasar.QasmExpression(:integer_literal, 3), Quasar.QasmExpression(:integer_literal, 4))))))
+        qasm = """
+        // arbitrary complex samples
+        extern gaussian(complex[float[size]] amp, duration d, duration sigma) -> waveform;
+        """
+        parsed  = parse_qasm(qasm)
+        @test Quasar.head(only(parsed.args)) == :function_definition
+        @test only(parsed.args).args[1] == Quasar.QasmExpression(:identifier, "gaussian")
+        @test only(parsed.args).args[3] == Quasar.QasmExpression(:waveform)
+        @test only(parsed.args).args[4] == Quasar.QasmExpression(:extern)
     end
     @testset "Casting" begin
         @testset "Casting to $to_type from $from_type" for (to_type, to_value) in (("bool", true),), (from_type, from_value) in (("int[32]", "32",),
@@ -396,18 +415,6 @@ Quasar.builtin_gates[] = complex_builtin_gates
         @test visitor(Quasar.QasmExpression(:indexed_identifier, Quasar.QasmExpression(:identifier, "q"), Quasar.QasmExpression(:integer_literal, 1))) == [1]
         @test_throws Quasar.QasmVisitorError("no identifier p defined.") visitor(Quasar.QasmExpression(:identifier, "p"))
         @test_throws Quasar.QasmVisitorError("no identifier p defined.") visitor(Quasar.QasmExpression(:indexed_identifier, Quasar.QasmExpression(:identifier, "p"), Quasar.QasmExpression(:integer_literal, 1)))
-    end
-    @testset "Forbidden keywords" begin
-        qasm = """
-        extern b;
-        """
-        @test_throws Quasar.QasmParseError parse_qasm(qasm)
-        try
-            parse_qasm(qasm)
-        catch e
-            msg = sprint(showerror, e)
-            @test startswith(msg, "QasmParseError: keyword extern not supported.")
-        end
     end
     @testset "Integers next to irrationals" begin
         qasm = """
@@ -1479,5 +1486,93 @@ Quasar.builtin_gates[] = complex_builtin_gates
             visitor(parsed)
             @test haskey(visitor.gate_defs, "tdg")
         end
+    end
+    @testset "Qubit spectroscopy" begin
+        qasm = """
+        defcalgrammar "openpulse";
+
+        // sweep parameters would be programmed in by some higher level bindings
+        const float frequency_start = 4.5e9;
+        const float frequency_step = 1e6;
+        const int frequency_num_steps = 301;
+
+        // define a long saturation pulse of a set duration and amplitude
+        defcal saturation_pulse \$0 {
+            // assume frame can be linked from a vendor supplied `cal` block
+            play(driveframe, constant(0.1, 100e-6));
+        }
+
+        // step into a `cal` block to set the start of the frequency sweep
+        cal {
+            set_frequency(driveframe, frequency_start);
+        }
+
+        for int i in [1:frequency_num_steps] {
+            // step into a `cal` block to adjust the pulse frequency via the frame frequency
+            cal {
+                shift_frequency(driveframe, frequency_step);
+            }
+
+            saturation_pulse \$0;
+            measure \$0;
+        }
+        """
+        parsed = parse_qasm(qasm)
+        # Not implemented yet!
+        #visitor = Quasar.QasmProgramVisitor()
+        #visitor(parsed)
+    end
+    @testset "Rabi time spectroscopy" begin
+        qasm = """
+        defcalgrammar "openpulse";
+
+        const duration pulse_length_start = 20dt;
+        const duration pulse_length_step = 1dt;
+        const int pulse_length_num_steps = 100;
+
+        for int i in [1:pulse_length_num_steps] {
+            duration pulse_length = pulse_length_start + (i-1)*pulse_length_step;
+            duration sigma = pulse_length / 4;
+            // since we are manipulating pulse lengths it is easier to define and play the waveform in a `cal` block
+            cal {
+                waveform wf = gaussian(0.5, pulse_length, sigma);
+                // assume frame can be linked from a vendor supplied `cal` block
+                play(driveframe, wf);
+            }
+            measure \$0;
+        }
+        """
+        parsed = parse_qasm(qasm)
+        # Not yet implemented!
+        #visitor = Quasar.QasmProgramVisitor()
+        #visitor(parsed)
+    end
+    @testset "Cross-frequency resonance" begin
+        qasm = """
+        defcalgrammar "openpulse";
+        cal {
+           // Access globally (or externally) defined ports
+           extern port d0;
+           extern port d1;
+           frame frame0 = newframe(d0, 5.0e9, 0);
+        }
+
+        defcal cross_resonance \$0, \$1 {
+            waveform wf1 = gaussian_square(1., 1024dt, 128dt, 32dt);
+            waveform wf2 = gaussian_square(0.1, 1024dt, 128dt, 32dt);
+
+            // generate new frame for second drive that is locally scoped
+            // initialized to time at the beginning of `cross_resonance`
+            frame temp_frame = newframe(d1, get_frequency(frame0), get_phase(frame0));
+
+            play(frame0, wf1);
+            play(temp_frame, wf2);
+
+        }
+        """
+        parsed = parse_qasm(qasm)
+        # Not yet implemented!
+        #visitor = Quasar.QasmProgramVisitor()
+        #visitor(parsed)
     end
 end

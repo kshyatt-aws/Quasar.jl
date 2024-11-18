@@ -24,7 +24,7 @@ const first_letter   = re"[A-Za-z_]" | unicode
 const general_letter = first_letter | re"[0-9]" 
 
 const prefloat = re"[-+]?([0-9]+\.[0-9]*|[0-9]*\.[0-9]+)"
-const integer = re"[-]?[0-9]+"
+const integer = re"[0-9]+"
 const float   = prefloat | ((prefloat | re"[-+]?[0-9]+") * re"[eE][-+]?[0-9]+")
 
 const qasm_tokens = [
@@ -105,8 +105,15 @@ const qasm_tokens = [
         :spaces          => re"[\t ]+",
         :classical_type    => re"bool|uint|int|float|angle|complex|array|bit|stretch|duration",
         :durationof_token  => re"durationof", # this MUST be lower than classical_type to preempt duration
+        :port_token        => re"port",
+        :frame_token       => re"frame",
+        :waveform_token    => re"waveform",
+        #:pulse_function    => re"newframe|shift_phase|get_phase|set_phase|get_frequency|set_frequency|shift_frequency|sum|mix|scale|phase_shift|play|set_frequency",
         :duration_literal  => (float | integer) * re"dt|ns|us|ms|s|\xce\xbc\x73", # transcode'd μs
-        :forbidden_keyword => re"cal|defcal|extern",
+        :cal_token         => re"cal",
+        :defcal_token      => re"defcal",
+        :extern_token      => re"extern",
+        :defcalgrammar_token => re"defcalgrammar",
 ]
 
 const dt_type       = Ref{DataType}()
@@ -118,7 +125,7 @@ function basic_parse_pragma end
 function basic_visit_pragma end
 
 function __init__()
-    dt_type[] = Nanosecond
+    dt_type[]       = Nanosecond
     builtin_gates[] = basic_builtin_gates
     visit_pragma[]  = basic_visit_pragma
     parse_pragma[]  = basic_parse_pragma
@@ -283,13 +290,23 @@ function parse_function_def(tokens, stack, start, qasm)
     has_return_type  = tokens[1][end] == arrow_token
     if has_return_type
         arrow = popfirst!(tokens)
-        tokens[1][end] == classical_type || throw(QasmParseError("function return type must be a classical type", stack, start, qasm))
-        return_type = parse_classical_type(tokens, stack, start, qasm)
+        if tokens[1][end] == classical_type
+            return_type = parse_classical_type(tokens, stack, start, qasm)
+        elseif tokens[1][end] == waveform_token
+            popfirst!(tokens)
+            return_type = QasmExpression(:waveform)
+        else
+            throw(QasmParseError("function return type must be a classical type or waveform", stack, start, qasm))
+        end
     else
         return_type = QasmExpression(:void)
     end
     expr = QasmExpression(:function_definition, function_name_id, arguments, return_type)
-    parse_block_body(expr, tokens, stack, start, qasm)
+    if !isempty(tokens)
+        parse_block_body(expr, tokens, stack, start, qasm)
+    else
+        push!(expr, QasmExpression(:extern))
+    end
     return expr
 end
 function parse_gate_def(tokens, stack, start, qasm)
@@ -304,6 +321,35 @@ function parse_gate_def(tokens, stack, start, qasm)
     expr = QasmExpression(:gate_definition, gate_name_id, gate_args, target_expr)
     parse_block_body(expr, tokens, stack, start, qasm)
     return expr
+end
+
+function parse_defcal(tokens, stack, start, qasm)
+    defcal_name = popfirst!(tokens)
+    defcal_name[end] == identifier || throw(QasmParseError("defcal must have a valid identifier as a name", stack, start, qasm))
+    defcal_name_id = parse_identifier(defcal_name, qasm)
+
+    defcal_args  = parse_arguments_list(tokens, stack, start, qasm)
+    qubit_tokens = splice!(tokens, 1:findfirst(triplet->triplet[end]==lbrace, tokens)-1)
+    push!(qubit_tokens, (-1, Int32(-1), semicolon))
+    target_expr = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
+    expr = QasmExpression(:defcal, defcal_name_id, defcal_args, target_expr)
+    parse_block_body(expr, tokens, stack, start, qasm)
+    return expr
+end
+
+struct Port end
+struct Frame
+    port::Port
+    frequency::Float64
+    phase::Float64
+end
+
+abstract type AbstractWaveform end
+struct ArrayWaveform <: AbstractWaveform
+    values::Vector{ComplexF64}
+end
+struct FunctionWaveform <: AbstractWaveform
+    generator::Function
 end
 
 struct SizedBitVector <: AbstractArray{Bool, 1}
@@ -404,6 +450,8 @@ function parse_classical_type(tokens, stack, start, qasm)
         return QasmExpression(:classical_type, SizedUInt(size))
     elseif var_type == "float"
         return QasmExpression(:classical_type, SizedFloat(size))
+    elseif var_type == "angle"
+        return QasmExpression(:classical_type, SizedAngle(size))
     elseif var_type == "complex"
         return QasmExpression(:classical_type, SizedComplex(size))
     elseif var_type == "bool"
@@ -442,7 +490,7 @@ function parse_assignment_op(op_token, qasm)
     return binary_assignment_ops[op_string.args[1]::String]
 end
 
-parse_string_literal(token, qasm)  = QasmExpression(:string_literal, String(qasm[token[1]:token[1]+token[2]-1]))
+parse_string_literal(token, qasm)  = QasmExpression(:string_literal, String(codeunits(qasm)[token[1]:token[1]+token[2]-1]))
 parse_integer_literal(token, qasm) = QasmExpression(:integer_literal, tryparse(Int, qasm[token[1]:token[1]+token[2]-1]))
 parse_hex_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(UInt, qasm[token[1]:token[1]+token[2]-1]))
 parse_oct_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(Int, qasm[token[1]:token[1]+token[2]-1]))
@@ -680,13 +728,17 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif start_token[end] == continue_token
         token_name = QasmExpression(:continue)
     elseif start_token[end] == lparen # could be some kind of expression
-        token_name = parse_paren_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
+        token_name = parse_paren_expression(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] == lbrace # set expression 
         token_name = parse_set_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
     elseif start_token[end] == lbracket
-        token_name = parse_bracketed_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
+        token_name = parse_bracketed_expression(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] == classical_type 
         token_name = parse_classical_type(pushfirst!(tokens, start_token), stack, start, qasm)
+    elseif start_token[end] == waveform_token
+        token_name = QasmExpression(:waveform)
+    elseif start_token[end] == frame_token
+        token_name = QasmExpression(:frame)
     elseif start_token[end] ∈ (string_token, integer_token, float_token, hex, oct, bin, irrational, dot, boolean, duration_literal)
         token_name = parse_literal(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] ∈ (mutable, readonly, const_token)
@@ -744,6 +796,10 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif start_token[end] == classical_type && (next_token[end] ∈ (lbracket, identifier))
         expr = QasmExpression(:classical_declaration, token_name)
         push!(expr, parse_expression(tokens, stack, start, qasm))
+    elseif start_token[end] ∈ (frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
+        expr      = QasmExpression(:classical_declaration, token_name)
+        next_expr = parse_expression(tokens, stack, start, qasm)
+        push!(expr, next_expr)
     elseif start_token[end] == classical_type && next_token[end] == lparen
         expr = QasmExpression(:cast, token_name)
         interior_tokens = extract_parensed(tokens, stack, start, qasm)
@@ -771,10 +827,11 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif next_token[end] == operator
         op_token        = parse_identifier(popfirst!(tokens), qasm)
         left_hand_side  = token_name
+        right_hand_head = first(tokens)[end]
         right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
         op_symbol       = Symbol(op_token.args[1])
         raw_expr        = QasmExpression(:binary_op, op_symbol, token_name, right_hand_side)
-        if head(right_hand_side) == :binary_op && has_precedence(op_symbol, right_hand_side.args[1])
+        if head(right_hand_side) == :binary_op && has_precedence(op_symbol, right_hand_side.args[1]) && right_hand_head != lparen # parens pre-prempt precedence 
             rhs_op   = right_hand_side.args[1]
             new_lhs  = QasmExpression(:binary_op, op_symbol, left_hand_side, right_hand_side.args[2])
             new_rhs  = right_hand_side.args[end]
@@ -798,13 +855,14 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
             expr = QasmExpression(:gate_call, token_name, arguments, target_expr)
         else # this is a function call
             next_token[end] == semicolon && popfirst!(tokens)
+            raw_expr = QasmExpression(:function_call, token_name, arguments)
             if next_token[end] == operator
                 next_op_token   = parse_identifier(popfirst!(tokens), qasm)
-                left_hand_side  = QasmExpression(:function_call, token_name, arguments)
+                left_hand_side  = raw_expr
                 right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
                 expr = QasmExpression(:binary_op, Symbol(next_op_token.args[1]), left_hand_side, right_hand_side)
             else
-                expr = QasmExpression(:function_call, token_name, arguments)
+                expr = raw_expr
             end
         end
     end
@@ -845,15 +903,35 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
         elseif token == const_token
             closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for const declaration", stack, start, qasm))
-            raw_expr = parse_expression(splice!(clean_tokens, 1:closing), stack, start, qasm)
-            expr = QasmExpression(:const_declaration, raw_expr.args)
-            push!(stack, expr)
-        elseif token == classical_type 
-            closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            raw_expr  = parse_expression(splice!(clean_tokens, 1:closing), stack, start, qasm)
+            push!(stack, QasmExpression(:const_declaration, raw_expr.args))
+        elseif token == classical_type || token == frame_token || token == waveform_token
+            closing     = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for classical declaration", stack, start, qasm))
             line_tokens = pushfirst!(splice!(clean_tokens, 1:closing), (start, len, token))
             expr        = parse_expression(line_tokens, stack, start, qasm)
             push!(stack, expr)
+        elseif token == cal_token
+            expr = QasmExpression(:cal)
+            parse_block_body(expr, clean_tokens, stack, start, qasm)
+            push!(stack, expr)
+        elseif token == defcal_token
+            expr = parse_defcal(clean_tokens, stack, start, qasm)
+            push!(stack, expr)
+        elseif token == defcalgrammar_token
+            next_token = first(clean_tokens)
+            if next_token[end] != string_token || String(codeunits(qasm)[next_token[1]:next_token[1]+next_token[2]-1]) != "\"openpulse\""
+                throw(QasmParseError("only \"openpulse\" grammar is currently supported", stack, start, qasm))
+            end
+        elseif token == extern_token
+            closing     = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            isnothing(closing) && throw(QasmParseError("missing final semicolon for extern declaration", stack, start, qasm))
+            line_tokens = splice!(clean_tokens, 1:closing-1)
+            if first(line_tokens)[end] ∈ (port_token, frame_token)
+
+            else
+                push!(stack, parse_function_def(line_tokens, stack, start, qasm))
+            end
         elseif token == input
             closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for input", stack, start, qasm))
@@ -969,9 +1047,6 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             clean_tokens = pushfirst!(clean_tokens, (start, len, token))
             expr = parse_expression(clean_tokens, stack, start, qasm)
             push!(stack, expr)
-        elseif token == forbidden_keyword
-            token_id = name(parse_identifier((start, len, token), qasm))
-            throw(QasmParseError("keyword $token_id not supported.", stack, start, qasm))
         end
     end
     return stack
@@ -1258,20 +1333,6 @@ function evaluate_binary_op(op::Symbol, @nospecialize(lhs), @nospecialize(rhs))
     op == :^ && return lhs .⊻ rhs
 end
 
-function name(expr::QasmExpression)::String
-    head(expr) == :identifier         && return expr.args[1]::String
-    head(expr) == :indexed_identifier && return name(expr.args[1]::QasmExpression)
-    head(expr) == :qubit_declaration  && return name(expr.args[1]::QasmExpression)
-    head(expr) == :classical_declaration && return name(expr.args[2]::QasmExpression)
-    head(expr) == :input              && return name(expr.args[2]::QasmExpression)
-    head(expr) == :function_call      && return name(expr.args[1]::QasmExpression)
-    head(expr) == :gate_call          && return name(expr.args[1]::QasmExpression)
-    head(expr) == :gate_definition    && return name(expr.args[1]::QasmExpression)
-    head(expr) == :classical_assignment && return name(expr.args[1].args[2]::QasmExpression)
-    head(expr) == :hw_qubit           && return replace(expr.args[1], "\$"=>"")
-    throw(QasmVisitorError("name not defined for expressions of type $(head(expr))"))
-end
-
 function evaluate_modifiers(v::V, expr::QasmExpression) where {V<:AbstractVisitor}
     if head(expr) == :power_mod
         pow_expr = QasmExpression(:pow, v(expr.args[1]::QasmExpression))
@@ -1295,6 +1356,20 @@ function evaluate_modifiers(v::V, expr::QasmExpression) where {V<:AbstractVisito
         new_head = head(expr) == :control_mod ? :ctrl : :negctrl
         return (QasmExpression(new_head), inner)
     end
+end
+
+function name(expr::QasmExpression)::String
+    head(expr) == :identifier         && return expr.args[1]::String
+    head(expr) == :indexed_identifier && return name(expr.args[1]::QasmExpression)
+    head(expr) == :qubit_declaration  && return name(expr.args[1]::QasmExpression)
+    head(expr) == :classical_declaration && return name(expr.args[2]::QasmExpression)
+    head(expr) == :input              && return name(expr.args[2]::QasmExpression)
+    head(expr) == :function_call      && return name(expr.args[1]::QasmExpression)
+    head(expr) == :gate_call          && return name(expr.args[1]::QasmExpression)
+    head(expr) == :gate_definition    && return name(expr.args[1]::QasmExpression)
+    head(expr) == :classical_assignment && return name(expr.args[1].args[2]::QasmExpression)
+    head(expr) == :hw_qubit           && return replace(expr.args[1], "\$"=>"")
+    throw(QasmVisitorError("name not defined for expressions of type $(head(expr))"))
 end
 
 # nosemgrep
