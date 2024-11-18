@@ -174,6 +174,24 @@ Quasar.builtin_gates[] = complex_builtin_gates
             @test ix == c_ix
         end
     end
+    @testset "Block comment" begin
+        qasm = """
+        qubit[2] qs;
+        int[8] two = 2;
+        gphase(π);
+        /*** Apply inverse of gphase here ***/
+        inv @ gphase(π / 2);
+        negctrl @ ctrl @ gphase(2 * π) qs[0], qs[1];
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test visitor.instructions == [
+                                       (type="gphase", arguments=InstructionArgument[π], targets=[0, 1], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="gphase", arguments=InstructionArgument[π/2], targets=[0, 1], controls=Pair{Int,Int}[], exponent=-1.0),
+                                       (type="gphase", arguments=InstructionArgument[2*π], targets=[0, 1], controls=[0=>0, 1=>1], exponent=1.0),
+                                      ]
+    end
     @testset "Randomized Benchmarking" begin
         qasm = """
         qubit[2] q;
