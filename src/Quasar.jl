@@ -1,6 +1,6 @@
 module Quasar
 
-using Automa, AbstractTrees, DataStructures, Dates, PrecompileTools
+using AbstractTrees, DataStructures, Dates, PrecompileTools
 using DataStructures: Stack
 
 export parse_qasm, QasmProgramVisitor
