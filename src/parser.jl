@@ -112,14 +112,14 @@ function parse_function_def(tokens, stack, start, qasm)
     return expr
 end
 function parse_gate_def(tokens, stack, start, qasm)
-    gate_name = popfirst!(tokens)
+    gate_name    = popfirst!(tokens)
     gate_name[end] == identifier || throw(QasmParseError("gate definition must have a valid identifier as a name", stack, start, qasm))
     gate_name_id = parse_identifier(gate_name, qasm)
 
     gate_args    = parse_arguments_list(tokens, stack, start, qasm)
     qubit_tokens = splice!(tokens, 1:findfirst(triplet->triplet[end]==lbrace, tokens)-1)
     push!(qubit_tokens, (-1, Int32(-1), semicolon))
-    target_expr = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
+    target_expr  = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
     expr = QasmExpression(:gate_definition, gate_name_id, gate_args, target_expr)
     expr = parse_block_body(expr, tokens, stack, start, qasm)
     return expr
@@ -166,7 +166,6 @@ function parse_classical_type(tokens, stack, start, qasm)
     else
         !any(triplet->triplet[end] == semicolon, tokens) && push!(tokens, (-1, Int32(-1), semicolon))
         size = is_sized ? parse_expression(tokens, stack, start, qasm) : QasmExpression(:integer_literal, -1)
-
     end
     if var_type == "bit"
         return QasmExpression(:classical_type, SizedBitVector(size))
@@ -238,11 +237,11 @@ function parse_duration_literal(token, qasm)
 end
 function parse_irrational_literal(token, qasm)
     raw_string = String(codeunits(qasm)[token[1]:token[1]+token[2]-1])
-    raw_string == "pi" && return QasmExpression(:irrational_literal, π)
-    raw_string == "euler" && return QasmExpression(:irrational_literal, ℯ)
-    raw_string == "tau" && return QasmExpression(:irrational_literal, 2*π)
-    raw_string == "π" && return QasmExpression(:irrational_literal, π)
-    raw_string == "τ" && return QasmExpression(:irrational_literal, 2*π)
+    raw_string == "pi"      && return QasmExpression(:irrational_literal, π)
+    raw_string == "euler"   && return QasmExpression(:irrational_literal, ℯ)
+    raw_string == "tau"     && return QasmExpression(:irrational_literal, 2*π)
+    raw_string == "π"       && return QasmExpression(:irrational_literal, π)
+    raw_string == "τ"       && return QasmExpression(:irrational_literal, 2*π)
     raw_string ∈ ("ℯ", "ℇ") && return QasmExpression(:irrational_literal, ℯ)
 end
 function extract_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, opener, closer, stack, start, qasm)
@@ -366,12 +365,11 @@ function parse_gate_mods(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, star
         next_token = first(tokens)
         if next_token[end] == identifier || next_token[end] == builtin_gate
             push!(expr, parse_expression(tokens, stack, start, qasm))
-            return expr
         else
             next_mod_expr = parse_gate_mods(tokens, stack, start, qasm)
             push!(expr, next_mod_expr)
-            return expr
         end
+        return expr
     end
 end
 
@@ -574,7 +572,7 @@ function parse_include(tokens, stack, start, qasm)
     return file_exprs
 end
 
-function parse_measure(tokens, stack, start, qasm)
+function parse_measure(tokens, stack, start, qasm)::QasmExpression
     eol = findfirst(triplet->triplet[end] == semicolon, tokens)
     measure_tokens = splice!(tokens, 1:eol)
     arrow_location = findfirst(triplet->triplet[end] == arrow_token, measure_tokens)
@@ -648,19 +646,16 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             input_var = parse_classical_var(splice!(clean_tokens, 1:closing), stack, start, qasm)
             expr      = QasmExpression(:input, input_var...)
             push!(stack, expr)
-            popfirst!(clean_tokens) #semicolon
         elseif token == output 
             closing    = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for output", stack, start, qasm))
             output_var = parse_classical_var(splice!(clean_tokens, 1:closing), stack, start, qasm)
             expr       = QasmExpression(:output, output_var...)
             push!(stack, expr)
-            popfirst!(clean_tokens) #semicolon
         elseif token == qubit
             closing = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for qubit", stack, start, qasm))
             qubit_tokens = splice!(clean_tokens, 1:closing-1)
-            popfirst!(clean_tokens) # semicolon
             expr = parse_qubit_declaration(qubit_tokens, stack, start, qasm)
             push!(stack, expr)
         elseif token == gate_def
