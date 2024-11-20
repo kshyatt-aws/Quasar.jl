@@ -432,7 +432,7 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     end
     head(token_name) == :empty && throw(QasmParseError("unable to parse line with start token $(start_token[end])", stack, start, qasm))
     next_token = first(tokens)
-    if next_token[end] == semicolon || next_token[end] == comma || start_token[end] ∈ (lbracket, lbrace)
+    if next_token[end] ∈ (semicolon, comma) || start_token[end] ∈ (lbracket, lbrace)
         expr = token_name
     elseif start_token[end] == integer_token && next_token[end] == irrational # this is banned! 2π is not supported, 2*π is.
         integer_lit = parse_integer_literal(start_token, qasm).args[1]
@@ -552,6 +552,47 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     return expr
 end
 
+function parse_version(tokens, stack, start, qasm)
+    closing = findfirst(triplet->triplet[end] == semicolon, tokens)
+    isnothing(closing) && throw(QasmParseError("missing final semicolon for OPENQASM", stack, start, qasm))
+    closing == 1 && throw(QasmParseError("missing version number", stack, start, qasm))
+    version_val = parse_literal([popfirst!(tokens)], stack, start, qasm)
+    isinteger(version_val.args[1]) || throw(QasmParseError("version number must be an integer", stack, version_start, qasm))
+    return QasmExpression(:version, QasmExpression(:float_literal, version_val.args[1]))
+end
+
+function parse_include(tokens, stack, start, qasm)
+    closing       = findfirst(triplet->triplet[end] == semicolon, tokens)
+    isnothing(closing) && throw(QasmParseError("missing final semicolon for include", stack, start, qasm))
+    file_name     = popfirst!(tokens)
+    popfirst!(tokens) #semicolon
+    file_name[end] == string_token || throw(QasmParseError("included filename must be passed as a string", stack, start, qasm))
+    file_name_str = replace(qasm[file_name[1]:file_name[1]+file_name[2]-1], "\""=>"", "'"=>"")
+    file_contents = read(file_name_str, String)
+    file_expr     = parse_qasm(file_contents)
+    file_exprs    = file_expr.args
+    return file_exprs
+end
+
+function parse_measure(tokens, stack, start, qasm)
+    eol = findfirst(triplet->triplet[end] == semicolon, tokens)
+    measure_tokens = splice!(tokens, 1:eol)
+    arrow_location = findfirst(triplet->triplet[end] == arrow_token, measure_tokens)
+    if !isnothing(arrow_location) # assignment
+        targets_tokens  = splice!(measure_tokens, 1:arrow_location - 1)
+        popfirst!(measure_tokens) # arrow
+        push!(targets_tokens, (-1, Int32(-1), semicolon))
+        targets         = parse_expression(targets_tokens, stack, start, qasm)
+        left_hand_side  = parse_expression(measure_tokens, stack, start, qasm)
+        right_hand_side = QasmExpression(:measure, targets)
+        op_expression   = QasmExpression(:binary_op, Symbol("="), left_hand_side, right_hand_side)
+        return QasmExpression(:classical_assignment, op_expression)
+    else
+        targets = parse_expression(measure_tokens, stack, start, qasm)
+        return QasmExpression(:measure, targets)
+    end
+end
+
 function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::String, root=QasmExpression(:program))
     stack = Stack{QasmExpression}()
     push!(stack, root)
@@ -560,12 +601,7 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
         if token == newline
             continue
         elseif token == version
-            closing = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
-            isnothing(closing) && throw(QasmParseError("missing final semicolon for OPENQASM", stack, start, qasm))
-            closing == 1 && throw(QasmParseError("missing version number", stack, start, qasm))
-            version_val = parse_literal([popfirst!(clean_tokens)], stack, start, qasm)
-            isinteger(version_val.args[1]) || throw(QasmParseError("version number must be an integer", stack, version_start, qasm))
-            expr = QasmExpression(:version, QasmExpression(:float_literal, version_val.args[1]))
+            expr = parse_version(clean_tokens, stack, start, qasm)
             push!(stack, expr)
         elseif token == pragma
             closing = findfirst(triplet->triplet[end] == newline, clean_tokens)
@@ -573,16 +609,8 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             pragma_tokens = splice!(clean_tokens, 1:closing-1)
             push!(stack, parse_pragma[](pragma_tokens, stack, start, qasm))
         elseif token == include_token
-            closing       = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
-            isnothing(closing) && throw(QasmParseError("missing final semicolon for include", stack, start, qasm))
-            file_name     = popfirst!(clean_tokens)
-            popfirst!(clean_tokens) #semicolon
-            file_name[end] == string_token || throw(QasmParseError("included filename must be passed as a string", stack, start, qasm))
-            file_name_str = replace(qasm[file_name[1]:file_name[1]+file_name[2]-1], "\""=>"", "'"=>"")
-            file_contents = read(file_name_str, String)
-            file_expr     = parse_qasm(file_contents)
-            file_exprs    = file_expr.args
-            foreach(ex->push!(stack, ex), file_exprs)
+            exprs = parse_include(clean_tokens, stack, start, qasm)
+            foreach(ex->push!(stack, ex), exprs)
         elseif token == const_token
             closing   = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             isnothing(closing) && throw(QasmParseError("missing final semicolon for const declaration", stack, start, qasm))
@@ -665,22 +693,9 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
         elseif token == line_comment
             eol = findfirst(triplet->triplet[end] == newline, clean_tokens)
             splice!(clean_tokens, 1:eol)
-        elseif token == measure 
-            eol = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
-            measure_tokens = splice!(clean_tokens, 1:eol)
-            arrow_location = findfirst(triplet->triplet[end] == arrow_token, measure_tokens)
-            if !isnothing(arrow_location) # assignment
-                targets_tokens = splice!(measure_tokens, 1:arrow_location - 1)
-                popfirst!(measure_tokens) # arrow
-                targets = parse_expression(push!(targets_tokens, (-1, Int32(-1), semicolon)), stack, start, qasm)
-                left_hand_side = parse_expression(measure_tokens, stack, start, qasm)
-                right_hand_side = QasmExpression(:measure, targets)
-                op_expression = QasmExpression(:binary_op, Symbol("="), left_hand_side, right_hand_side)
-                push!(stack, QasmExpression(:classical_assignment, op_expression))
-            else
-                targets = parse_expression(measure_tokens, stack, start, qasm)
-                push!(stack, QasmExpression(:measure, targets))
-            end
+        elseif token == measure
+            expr = parse_measure(clean_tokens, stack, start, qasm)
+            push!(stack, expr)
         elseif token ∈ (negctrl_mod, control_mod, inverse_mod, power_mod)
             gate_mod_tokens = pushfirst!(clean_tokens, (start, len, token))
             expr = parse_gate_mods(gate_mod_tokens, stack, start, qasm)
