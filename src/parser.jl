@@ -9,37 +9,36 @@ function parse_block_body(expr, tokens, stack, start, qasm)
         foreach(body_expr->push!(body_exprs[1], body_expr), body_exprs[2:end])
         push!(expr, body_exprs[1])
     else # one line
-        eol = findfirst(triplet->triplet[end] == semicolon, tokens)
-        body_tokens = splice!(tokens, 1:eol)
-        body = parse_expression(body_tokens, stack, start, qasm)
+        eol  = findfirst(triplet->triplet[end] == semicolon, tokens)
+        body = parse_expression(splice!(tokens, 1:eol), stack, start, qasm)
         push!(expr, body)
     end
+    return expr
 end
 
 function parse_switch_block(tokens, stack, start, qasm)
-    expr = QasmExpression(:switch)
-    cond_tokens = extract_expression(tokens, lparen, rparen, stack, start, qasm)
+    expr            = QasmExpression(:switch)
+    cond_tokens     = extract_expression(tokens, lparen, rparen, stack, start, qasm)
     push!(expr, parse_expression(cond_tokens, stack, start, qasm))
     interior_tokens = extract_expression(tokens, lbrace, rbrace, stack, start, qasm)
-    met_default = false
+    met_default     = false
     while !isempty(interior_tokens)
         next_token = popfirst!(interior_tokens)
         if next_token[end] == case
             !met_default || throw(QasmParseError("case statement cannot occur after default in switch block.", stack, start, qasm))
-            case_expr = QasmExpression(:case)
-            brace_loc = findfirst(triplet->triplet[end] == lbrace, interior_tokens)
+            case_expr  = QasmExpression(:case)
+            brace_loc  = findfirst(triplet->triplet[end] == lbrace, interior_tokens)
             isnothing(brace_loc) && throw(QasmParseError("case statement missing opening {", stack, start, qasm))
             val_tokens = splice!(interior_tokens, 1:brace_loc-1)
             push!(val_tokens, (-1, Int32(-1), semicolon))
             push!(case_expr, parse_list_expression(val_tokens, stack, start, qasm))
-            parse_block_body(case_expr, interior_tokens, stack, start, qasm)
+            case_expr  = parse_block_body(case_expr, interior_tokens, stack, start, qasm)
             push!(expr, case_expr)
         elseif next_token[end] == default
             !met_default || throw(QasmParseError("only one default statement allowed in switch block.", stack, start, qasm))
-            default_expr = QasmExpression(:default)
-            parse_block_body(default_expr, interior_tokens, stack, start, qasm)
+            default_expr = parse_block_body(QasmExpression(:default), interior_tokens, stack, start, qasm)
             push!(expr, default_expr)
-            met_default = true
+            met_default  = true
         elseif next_token[end] ∈ (newline, semicolon)
             continue
         else
@@ -52,14 +51,13 @@ end
 function parse_if_block(tokens, stack, start, qasm)
     condition_tokens = extract_expression(tokens, lparen, rparen, stack, start, qasm)
     condition_value  = parse_expression(condition_tokens, stack, start, qasm)
-    if_expr = QasmExpression(:if, condition_value)
+    if_expr  = QasmExpression(:if, condition_value)
     # handle condition
-    parse_block_body(if_expr, tokens, stack, start, qasm)
+    if_expr  = parse_block_body(if_expr, tokens, stack, start, qasm)
     has_else = tokens[1][end] == else_block 
     if has_else
         popfirst!(tokens) # else
-        else_expr = QasmExpression(:else)
-        parse_block_body(else_expr, tokens, stack, start, qasm)
+        else_expr = parse_block_body(QasmExpression(:else), tokens, stack, start, qasm)
         push!(if_expr, else_expr)
     end
     return if_expr
@@ -67,14 +65,14 @@ end
 function parse_while_loop(tokens, stack, start, qasm)
     condition_tokens = extract_expression(tokens, lparen, rparen, stack, start, qasm)
     condition_value  = parse_expression(condition_tokens, stack, start, qasm)
-    while_expr = QasmExpression(:while, condition_value)
+    while_expr       = QasmExpression(:while, condition_value)
     # handle condition
-    parse_block_body(while_expr, tokens, stack, start, qasm)
+    while_expr       = parse_block_body(while_expr, tokens, stack, start, qasm)
     return while_expr
 end
 function parse_for_loop(tokens, loop_var_type, loop_var_name, loop_values, stack, start, qasm)
     for_expr = QasmExpression(:for, loop_var_type, loop_var_name, loop_values)
-    parse_block_body(for_expr, tokens, stack, start, qasm)
+    for_expr = parse_block_body(for_expr, tokens, stack, start, qasm)
     return for_expr
 end
 
@@ -107,7 +105,7 @@ function parse_function_def(tokens, stack, start, qasm)
     end
     expr = QasmExpression(:function_definition, function_name_id, arguments, return_type)
     if !isempty(tokens)
-        parse_block_body(expr, tokens, stack, start, qasm)
+        expr = parse_block_body(expr, tokens, stack, start, qasm)
     else
         push!(expr, QasmExpression(:extern))
     end
@@ -123,21 +121,21 @@ function parse_gate_def(tokens, stack, start, qasm)
     push!(qubit_tokens, (-1, Int32(-1), semicolon))
     target_expr = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
     expr = QasmExpression(:gate_definition, gate_name_id, gate_args, target_expr)
-    parse_block_body(expr, tokens, stack, start, qasm)
+    expr = parse_block_body(expr, tokens, stack, start, qasm)
     return expr
 end
 
 function parse_defcal(tokens, stack, start, qasm)
-    defcal_name = popfirst!(tokens)
+    defcal_name    = popfirst!(tokens)
     defcal_name[end] == identifier || throw(QasmParseError("defcal must have a valid identifier as a name", stack, start, qasm))
     defcal_name_id = parse_identifier(defcal_name, qasm)
 
     defcal_args  = parse_arguments_list(tokens, stack, start, qasm)
     qubit_tokens = splice!(tokens, 1:findfirst(triplet->triplet[end]==lbrace, tokens)-1)
     push!(qubit_tokens, (-1, Int32(-1), semicolon))
-    target_expr = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
-    expr = QasmExpression(:defcal, defcal_name_id, defcal_args, target_expr)
-    parse_block_body(expr, tokens, stack, start, qasm)
+    target_expr  = QasmExpression(:qubit_targets, parse_list_expression(qubit_tokens, stack, start, qasm))
+    expr         = QasmExpression(:defcal, defcal_name_id, defcal_args, target_expr)
+    expr         = parse_block_body(expr, tokens, stack, start, qasm)
     return expr
 end
 
@@ -145,7 +143,7 @@ function parse_classical_type(tokens, stack, start, qasm)
     is_sized  = length(tokens) > 1 && tokens[2][end] == lbracket
     type_name = popfirst!(tokens)
     type_name[end] == classical_type || throw(QasmParseError("classical variable must have a classical type", stack, start, qasm))
-    var_type = qasm[type_name[1]:type_name[1]+type_name[2]-1]
+    var_type  = qasm[type_name[1]:type_name[1]+type_name[2]-1]
     if var_type == "complex"
         complex_tokens = extract_expression(tokens, lbracket, rbracket, stack, start, qasm)
         eltype = parse_classical_type(complex_tokens, stack, start, qasm)
@@ -190,9 +188,7 @@ end
 
 function parse_classical_var(tokens, stack, start, qasm)
     # detect if we have a declared size
-    is_declaration = false
     if tokens[end][end] == semicolon
-        is_declaration = true
         pop!(tokens)
     end
     name = pop!(tokens)
@@ -224,7 +220,7 @@ parse_hex_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(U
 parse_oct_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(Int, qasm[token[1]:token[1]+token[2]-1]))
 parse_bin_literal(token, qasm)     = QasmExpression(:integer_literal, tryparse(Int, qasm[token[1]:token[1]+token[2]-1]))
 parse_float_literal(token, qasm)   = QasmExpression(:float_literal, tryparse(Float64, qasm[token[1]:token[1]+token[2]-1]))
-parse_boolean_literal(token, qasm)   = QasmExpression(:boolean_literal, tryparse(Bool, qasm[token[1]:token[1]+token[2]-1]))
+parse_boolean_literal(token, qasm) = QasmExpression(:boolean_literal, tryparse(Bool, qasm[token[1]:token[1]+token[2]-1]))
 function parse_duration_literal(token, qasm)
     str = String(codeunits(qasm)[token[1]:token[1]+token[2]-1])
     duration = if endswith(str, "ns")
@@ -267,19 +263,6 @@ function extract_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, opener, 
     return extracted_tokens
 end
 
-function parse_bracketed_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start, qasm)
-    interior_tokens = extract_expression(tokens, lbracket, rbracket, stack, start, qasm)
-    return parse_list_expression(interior_tokens, stack, start, qasm)
-end
-function parse_set_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start, qasm)
-    interior = extract_expression(tokens, lbrace, rbrace, stack, start, qasm)
-    return parse_list_expression(interior, stack, start, qasm)
-end
-
-function parse_paren_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start, qasm)
-    interior_tokens = extract_expression(tokens, lparen, rparen, stack, start, qasm)
-    return parse_expression(interior_tokens, stack, start, qasm)
-end
 function parse_scope(tokens, stack, start, qasm)
     scope_tokens = extract_expression(tokens, lbrace, rbrace, stack, start, qasm)
     return parse_qasm(scope_tokens, qasm, QasmExpression(:scope))
@@ -373,7 +356,8 @@ function parse_gate_mods(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, star
            end
     next_token = first(tokens)
     if next_token[end] == lparen
-        arg = parse_paren_expression(tokens, stack, start, qasm)
+        interior_tokens = extract_expression(tokens, lparen, rparen, stack, start, qasm)
+        arg             = parse_list_expression(interior_tokens, stack, start, qasm)
         push!(expr, arg)
         next_token = first(tokens)
     end
@@ -428,12 +412,9 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         token_name = QasmExpression(:break)
     elseif start_token[end] == continue_token
         token_name = QasmExpression(:continue)
-    elseif start_token[end] == lparen # could be some kind of expression
-        token_name = parse_paren_expression(pushfirst!(tokens, start_token), stack, start, qasm)
-    elseif start_token[end] == lbrace # set expression 
-        token_name = parse_set_expression(pushfirst!(tokens, start_token), stack, start, qasm) 
-    elseif start_token[end] == lbracket
-        token_name = parse_bracketed_expression(pushfirst!(tokens, start_token), stack, start, qasm)
+    elseif start_token[end] ∈ (lparen, lbrace, lbracket) # could be some kind of expression
+        interior_tokens = extract_expression(pushfirst!(tokens, start_token), start_token[end], closing_token(start_token[end]), stack, start, qasm)
+        token_name = parse_list_expression(interior_tokens, stack, start, qasm)
     elseif start_token[end] == classical_type 
         token_name = parse_classical_type(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] == waveform_token
@@ -516,12 +497,13 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
             popfirst!(tokens)
             right_hand_side = QasmExpression(:measure, parse_expression(tokens, stack, start, qasm))
         elseif next_token[end] == operator
-            unary_op_token = parse_identifier(popfirst!(tokens), qasm)
-            next_token     = first(tokens)
-            unary_right_hand_side = next_token[end] == lparen ? parse_paren_expression(tokens, stack, start, qasm) : parse_expression(tokens, stack, start, qasm)
-            right_hand_side = QasmExpression(:unary_op, Symbol(unary_op_token.args[1]::String), unary_right_hand_side)
+            unary_op_token        = parse_identifier(popfirst!(tokens), qasm)
+            next_token            = first(tokens)
+            unary_right_hand_side = parse_expression(tokens, stack, start, qasm)
+            unary_op              = Symbol(unary_op_token.args[1]::String)
+            right_hand_side       = QasmExpression(:unary_op, unary_op, unary_right_hand_side)
         else
-            right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
+            right_hand_side       = parse_expression(tokens, stack, start, qasm)::QasmExpression
         end
         op_expr = QasmExpression(:binary_op, parse_assignment_op(op_token, qasm), token_name, right_hand_side) 
         expr = QasmExpression(:classical_assignment, op_expr)
@@ -613,8 +595,7 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             expr        = parse_expression(line_tokens, stack, start, qasm)
             push!(stack, expr)
         elseif token == cal_token
-            expr = QasmExpression(:cal)
-            parse_block_body(expr, clean_tokens, stack, start, qasm)
+            expr = parse_block_body(QasmExpression(:cal), clean_tokens, stack, start, qasm)
             push!(stack, expr)
         elseif token == defcal_token
             expr = parse_defcal(clean_tokens, stack, start, qasm)
@@ -712,32 +693,31 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             push!(stack, QasmExpression(:return, line_exprs))
         elseif token == box
             @warn "box expression encountered -- currently `box` is a no-op"
-            box_expr = QasmExpression(:box)
-            parse_block_body(box_expr, clean_tokens, stack, start, qasm)
+            box_expr = parse_block_body(QasmExpression(:box), clean_tokens, stack, start, qasm)
             push!(stack, box_expr)
         elseif token == reset_token
             @warn "reset expression encountered -- currently `reset` is a no-op"
-            eol = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            eol          = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             reset_tokens = splice!(clean_tokens, 1:eol)
-            targets = parse_list_expression(reset_tokens, stack, start, qasm)
+            targets      = parse_list_expression(reset_tokens, stack, start, qasm)
             push!(stack, QasmExpression(:reset, targets))
         elseif token == barrier_token
             @warn "barrier expression encountered -- currently `barrier` is a no-op"
-            eol = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            eol            = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
             barrier_tokens = splice!(clean_tokens, 1:eol)
-            targets = parse_list_expression(barrier_tokens, stack, start, qasm)
+            targets        = parse_list_expression(barrier_tokens, stack, start, qasm)
             push!(stack, QasmExpression(:barrier, targets))
         elseif token == delay_token
             @warn "delay expression encountered -- currently `delay` is a no-op"
-            eol = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
-            delay_tokens = splice!(clean_tokens, 1:eol)
-            delay_expr   = QasmExpression(:delay)
+            eol            = findfirst(triplet->triplet[end] == semicolon, clean_tokens)
+            delay_tokens   = splice!(clean_tokens, 1:eol)
+            delay_expr     = QasmExpression(:delay)
             # format is delay[duration]; or delay[duration] targets;
             delay_duration = extract_expression(delay_tokens, lbracket, rbracket, stack, start, qasm)
             push!(delay_expr, QasmExpression(:duration, parse_expression(delay_duration, stack, start, qasm)))
-            target_expr = QasmExpression(:targets)
+            target_expr    = QasmExpression(:targets)
             if first(delay_tokens)[end] != semicolon # targets present
-                targets = parse_list_expression(delay_tokens, stack, start, qasm)
+                targets    = parse_list_expression(delay_tokens, stack, start, qasm)
                 push!(target_expr, targets)
             end
             push!(delay_expr, target_expr)
