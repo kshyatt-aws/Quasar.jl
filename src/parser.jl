@@ -247,7 +247,6 @@ function parse_literal(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start,
     tokens[1][end] == boolean          && return parse_boolean_literal(popfirst!(tokens), qasm)
     tokens[1][end] == integer_token    && length(tokens) == 1 && return parse_integer_literal(popfirst!(tokens), qasm)
     tokens[1][end] == float_token      && length(tokens) == 1 && return parse_float_literal(popfirst!(tokens), qasm)
-    
     is_float     = tokens[1][end] == float_token
     is_complex   = false
     is_operator  = tokens[2][end] == operator
@@ -415,12 +414,6 @@ function parse_classical_assignment(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == measure
         popfirst!(tokens)
         right_hand_side       = QasmExpression(:measure, parse_expression(tokens, stack, start, qasm))
-    elseif next_token[end] == operator
-        unary_op_token        = parse_identifier(popfirst!(tokens), qasm)
-        next_token            = first(tokens)
-        unary_right_hand_side = parse_expression(tokens, stack, start, qasm)
-        unary_op              = Symbol(unary_op_token.args[1]::String)
-        right_hand_side       = QasmExpression(:unary_op, unary_op, unary_right_hand_side)
     else
         right_hand_side       = parse_expression(tokens, stack, start, qasm)::QasmExpression
     end
@@ -451,16 +444,30 @@ end
 function parse_unary_op(expr_head, tokens, stack, start, qasm)
     unary_op_symbol::Symbol = Symbol(expr_head.args[1]::String)
     unary_op_symbol ∈ (:~, :!, :-) || throw(QasmParseError("invalid unary operator $unary_op_symbol.", stack, start, qasm))
+    next_token_is_paren = first(tokens)[end] == lparen
     next_expr = parse_expression(tokens, stack, start, qasm)
     # apply unary op to next_expr
-    if head(next_expr) ∈ (:identifier, :indexed_identifier, :integer_literal, :float_literal, :string_literal, :irrational_literal, :boolean_literal, :complex_literal, :function_call, :cast, :duration_literal)
+    if head(next_expr) ∈ (:identifier, :indexed_identifier, :integer_literal, :float_literal, :string_literal, :irrational_literal, :boolean_literal, :function_call, :cast, :duration_literal)
         expr = QasmExpression(:unary_op, unary_op_symbol, next_expr)
+    elseif head(next_expr) == :complex_literal # -(1 + 2im) is not the same as -1 + 2im
+        no_real_part = iszero(abs(real(next_expr.args[1])))
+        no_imag_part = iszero(abs(imag(next_expr.args[1])))
+        is_not_minus = unary_op_symbol != :-
+        if next_token_is_paren || is_not_minus || no_real_part || no_imag_part
+            expr = QasmExpression(:unary_op, unary_op_symbol, next_expr)
+        else
+            expr = QasmExpression(:complex_literal, -real(next_expr.args[1]) + im*imag(next_expr.args[1])) 
+        end
     elseif head(next_expr) == :binary_op
-        # replace first argument
-        left_hand_side     = next_expr.args[2]::QasmExpression
-        new_left_hand_side = QasmExpression(:unary_op, unary_op_symbol, left_hand_side)
-        next_expr.args[2]  = new_left_hand_side
-        expr               = next_expr
+        if !next_token_is_paren
+            # replace first argument if next token isn't a paren
+            left_hand_side     = next_expr.args[2]::QasmExpression
+            new_left_hand_side = QasmExpression(:unary_op, unary_op_symbol, left_hand_side)
+            next_expr.args[2]  = new_left_hand_side
+            expr               = next_expr
+        else
+            expr = QasmExpression(:unary_op, unary_op_symbol, next_expr)
+        end
     end
     return expr
 end
@@ -488,7 +495,7 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         irrational_lit = parse_irrational_literal(next_token, qasm).args[1]
         throw(QasmParseError("expressions of form $(integer_lit)$(irrational_lit) are not supported -- you must separate the terms with a * operator.", stack, start, qasm))
     elseif start_token_type == operator
-        expr       = parse_unary_op(expr_head, tokens, stack, start, qasm)
+        expr           = parse_unary_op(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == colon
         expr       = parse_range(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == classical_type && start_token_type ∈ (mutable, readonly, const_token)
