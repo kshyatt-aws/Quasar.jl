@@ -102,3 +102,8 @@ make_tokenizer((error,
     [Token(i) => j for (i,j) in enumerate(last.(qasm_tokens))]
 )) |> eval
 
+function closing_token(t::Token)
+    t == lbrace && return rbrace
+    t == lbracket && return rbracket
+    t == lparen && return rparen
+end
