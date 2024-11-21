@@ -314,6 +314,8 @@ Quasar.builtin_gates[] = complex_builtin_gates
                                                                      ("int a = (3-4)*(5+2);", -7),
                                                                      ("float a = 1/2+4;", 4.5),
                                                                      ("int a = 2 + 3*4 - 5;", 14 - 5),
+                                                                     ("complex[float] a = -5+4im;", -5+4im),
+                                                                     ("complex[float] a = -(5+4im);", -5-4im),
                                                                      ("complex[float] a = 2+1/3im;", 2-(im/3)),
                                                                      ("bool a = 1 << 2 == 5;", false),
                                                                      ("bool a = true && true || false;", true),
@@ -892,7 +894,8 @@ Quasar.builtin_gates[] = complex_builtin_gates
     end
     @testset "Unary bit operators $op" for (op, typ, arg, result) in (("~", "bit[4]", "x", BitVector([1,0,1,0])),
                                                                       ("!", "bit", "x", false),
-                                                                      ("!", "bit", "x << 4", true)
+                                                                      ("!", "bit", "x << 4", false),
+                                                                      ("!", "bit", "(x << 4)", true),
                                                                      )
 
         qasm = """
