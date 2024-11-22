@@ -312,7 +312,10 @@ Quasar.builtin_gates[] = complex_builtin_gates
                                                                      ("float a = 2*(3 - 4)*5;", -10),
                                                                      ("int a = (3 - 4)*5;", -5),
                                                                      ("int a = (3-4)*(5+2);", -7),
+                                                                     ("int a = int(2.0) + int(3.0);", 5),
                                                                      ("float a = 1/2+4;", 4.5),
+                                                                     ("float a = 2**int(2.0);", 4.0),
+                                                                     ("int a = int(2**2);", 4),
                                                                      ("int a = 2 + 3*4 - 5;", 14 - 5),
                                                                      ("complex[float] a = 2+1/3im;", 2-(im/3)),
                                                                      ("bool a = 1 << 2 == 5;", false),
@@ -345,11 +348,11 @@ Quasar.builtin_gates[] = complex_builtin_gates
     end
     @testset "Casting" begin
         @testset "Casting to $to_type from $from_type" for (to_type, to_value) in (("bool", true),), (from_type, from_value) in (("int[32]", "32",),
-                                                                                                                              ("uint[16]", "1",),
-                                                                                                                              ("float", "2.5",),
-                                                                                                                              ("bool", "true",),
-                                                                                                                              ("bit", "\"1\"",),
-                                                                                                                             )
+                                                                                                                                 ("uint[16]", "1",),
+                                                                                                                                 ("float", "2.5",),
+                                                                                                                                 ("bool", "true",),
+                                                                                                                                 ("bit", "\"1\"",),
+                                                                                                                                )
             qasm = """
             $from_type a = $from_value;
             $to_type b = $to_type(a);
