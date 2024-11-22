@@ -371,7 +371,13 @@ function expression_start(tokens, stack, start, qasm)
         interior_tokens = extract_expression(pushfirst!(tokens, start_token), start_token[end], closing_token(start_token[end]), stack, start, qasm)
         expr_head = parse_list_expression(interior_tokens, stack, start, qasm)
     elseif start_token[end] == classical_type 
-        expr_head = parse_classical_type(pushfirst!(tokens, start_token), stack, start, qasm)
+        raw_expr = parse_classical_type(pushfirst!(tokens, start_token), stack, start, qasm)
+        if !isempty(tokens) && first(tokens)[end] == lparen
+            interior = extract_expression(tokens, lparen, rparen, stack, start, qasm)
+            expr_head = QasmExpression(:cast, raw_expr, parse_expression(interior, stack, start, qasm))
+        else
+            expr_head = raw_expr
+        end
     elseif start_token[end] == waveform_token
         expr_head = QasmExpression(:waveform)
     elseif start_token[end] == frame_token
@@ -497,9 +503,9 @@ end
 
 function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start, qasm)
     expr_head, start_token = expression_start(tokens, stack, start, qasm)
-    start_token_type = start_token[end]
+    start_token_type       = start_token[end]
     head(expr_head) == :empty && throw(QasmParseError("unable to parse line with start token $(start_token_type)", stack, start, qasm))
-    next_token = first(tokens)
+    next_token             = first(tokens)
     if next_token[end] ∈ (semicolon, comma) || start_token_type ∈ (lbracket, lbrace)
         expr = expr_head
     elseif start_token_type == integer_token && next_token[end] == irrational # this is banned! 2π is not supported, 2*π is.
@@ -515,9 +521,7 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         is_mutable = (start_token_type == mutable)
         header     = is_mutable ? :classical_declaration : :const_declaration
         expr       = QasmExpression(header, type, parse_expression(tokens, stack, start, qasm))
-    elseif start_token_type == classical_type && (next_token[end] ∈ (lbracket, identifier))
-        expr      = QasmExpression(:classical_declaration, expr_head, parse_expression(tokens, stack, start, qasm))
-    elseif start_token_type ∈ (frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
+    elseif start_token_type ∈ (classical_type, frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
         expr      = QasmExpression(:classical_declaration, expr_head, parse_expression(tokens, stack, start, qasm))
     elseif start_token_type == classical_type && next_token[end] == lparen
         expr      = parse_cast_expr(expr_head, tokens, stack, start, qasm)
