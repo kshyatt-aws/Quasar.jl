@@ -483,6 +483,18 @@ function parse_function_expr(expr_head, arguments, tokens, stack, start, qasm)
     end
 end
 
+function parse_cast_expr(expr_head, tokens, stack, start, qasm)
+    interior = extract_expression(tokens, lparen, rparen, stack, start, qasm)
+    raw_expr = QasmExpression(:cast, expr_head, parse_expression(interior, stack, start, qasm))
+    if !isempty(tokens) && first(tokens)[end] == operator
+        next_op_token   = parse_identifier(popfirst!(tokens), qasm)
+        right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
+        return QasmExpression(:binary_op, Symbol(next_op_token.args[1]), raw_expr, right_hand_side)
+    else
+        return raw_expr
+    end
+end
+
 function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start, qasm)
     expr_head, start_token = expression_start(tokens, stack, start, qasm)
     start_token_type = start_token[end]
@@ -508,8 +520,7 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     elseif start_token_type ∈ (frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
         expr      = QasmExpression(:classical_declaration, expr_head, parse_expression(tokens, stack, start, qasm))
     elseif start_token_type == classical_type && next_token[end] == lparen
-        interior  = extract_expression(tokens, lparen, rparen, stack, start, qasm)
-        expr      = QasmExpression(:cast, expr_head, parse_expression(interior, stack, start, qasm))
+        expr      = parse_cast_expr(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == assignment
         expr      = parse_classical_assignment(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == operator
