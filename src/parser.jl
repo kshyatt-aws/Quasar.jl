@@ -247,6 +247,12 @@ function parse_literal(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, start,
     tokens[1][end] == boolean          && return parse_boolean_literal(popfirst!(tokens), qasm)
     tokens[1][end] == integer_token    && length(tokens) == 1 && return parse_integer_literal(popfirst!(tokens), qasm)
     tokens[1][end] == float_token      && length(tokens) == 1 && return parse_float_literal(popfirst!(tokens), qasm)
+    # this is banned! 2π is not supported, 2*π is.
+    if tokens[1][end] == integer_token && tokens[2][end] == irrational
+        integer_lit    = parse_integer_literal(tokens[1], qasm).args[1]
+        irrational_lit = parse_irrational_literal(tokens[2], qasm).args[1]
+        throw(QasmParseError("expressions of form $(integer_lit)$(irrational_lit) are not supported -- you must separate the terms with a * operator.", stack, start, qasm))
+    end
     is_float     = tokens[1][end] == float_token
     is_complex   = false
     is_operator  = tokens[2][end] == operator
@@ -492,10 +498,6 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     next_token             = first(tokens)
     if next_token[end] ∈ (semicolon, comma) || start_token_type ∈ (lbracket, lbrace)
         expr = expr_head
-    elseif start_token_type == integer_token && next_token[end] == irrational # this is banned! 2π is not supported, 2*π is.
-        integer_lit    = parse_integer_literal(start_token, qasm).args[1]
-        irrational_lit = parse_irrational_literal(next_token, qasm).args[1]
-        throw(QasmParseError("expressions of form $(integer_lit)$(irrational_lit) are not supported -- you must separate the terms with a * operator.", stack, start, qasm))
     elseif start_token_type == operator
         expr           = parse_unary_op(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == colon
