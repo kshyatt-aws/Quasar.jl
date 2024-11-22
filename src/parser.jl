@@ -453,9 +453,7 @@ function parse_unary_op(expr_head, tokens, stack, start, qasm)
     next_token_is_paren = first(tokens)[end] == lparen
     next_expr = parse_expression(tokens, stack, start, qasm)
     # apply unary op to next_expr
-    if head(next_expr) ∈ (:identifier, :indexed_identifier, :integer_literal, :float_literal, :string_literal, :irrational_literal, :boolean_literal, :function_call, :cast, :duration_literal)
-        expr = QasmExpression(:unary_op, unary_op_symbol, next_expr)
-    elseif head(next_expr) == :complex_literal # -(1 + 2im) is not the same as -1 + 2im
+    if head(next_expr) == :complex_literal # -(1 + 2im) is not the same as -1 + 2im
         no_real_part = iszero(abs(real(next_expr.args[1])))
         no_imag_part = iszero(abs(imag(next_expr.args[1])))
         is_not_minus = unary_op_symbol != :-
@@ -464,34 +462,20 @@ function parse_unary_op(expr_head, tokens, stack, start, qasm)
         else
             expr = QasmExpression(:complex_literal, -real(next_expr.args[1]) + im*imag(next_expr.args[1])) 
         end
-    elseif head(next_expr) == :binary_op
-        if !next_token_is_paren
+    elseif head(next_expr) == :binary_op && !next_token_is_paren
             # replace first argument if next token isn't a paren
             left_hand_side     = next_expr.args[2]::QasmExpression
             new_left_hand_side = QasmExpression(:unary_op, unary_op_symbol, left_hand_side)
             next_expr.args[2]  = new_left_hand_side
             expr               = next_expr
-        else
-            expr = QasmExpression(:unary_op, unary_op_symbol, next_expr)
-        end
+    else
+        expr = QasmExpression(:unary_op, unary_op_symbol, next_expr)
     end
     return expr
 end
 
 function parse_function_expr(expr_head, arguments, tokens, stack, start, qasm)
     raw_expr   = QasmExpression(:function_call, expr_head, arguments)
-    if !isempty(tokens) && first(tokens)[end] == operator
-        next_op_token   = parse_identifier(popfirst!(tokens), qasm)
-        right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
-        return QasmExpression(:binary_op, Symbol(next_op_token.args[1]), raw_expr, right_hand_side)
-    else
-        return raw_expr
-    end
-end
-
-function parse_cast_expr(expr_head, tokens, stack, start, qasm)
-    interior = extract_expression(tokens, lparen, rparen, stack, start, qasm)
-    raw_expr = QasmExpression(:cast, expr_head, parse_expression(interior, stack, start, qasm))
     if !isempty(tokens) && first(tokens)[end] == operator
         next_op_token   = parse_identifier(popfirst!(tokens), qasm)
         right_hand_side = parse_expression(tokens, stack, start, qasm)::QasmExpression
@@ -523,8 +507,6 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         expr       = QasmExpression(header, type, parse_expression(tokens, stack, start, qasm))
     elseif start_token_type ∈ (classical_type, frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
         expr      = QasmExpression(:classical_declaration, expr_head, parse_expression(tokens, stack, start, qasm))
-    elseif start_token_type == classical_type && next_token[end] == lparen
-        expr      = parse_cast_expr(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == assignment
         expr      = parse_classical_assignment(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == operator
