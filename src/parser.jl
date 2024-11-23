@@ -368,7 +368,7 @@ function expression_start(tokens, stack, start, qasm)
     elseif start_token[end] == qubit
         expr_head = parse_qubit_declaration(tokens, stack, start, qasm)
     elseif start_token[end] == operator
-        expr_head = parse_identifier(start_token, qasm)
+        expr_head = parse_unary_op(pushfirst!(tokens, start_token), stack, start, qasm)
     elseif start_token[end] == break_token
         expr_head = QasmExpression(:break)
     elseif start_token[end] == continue_token
@@ -390,8 +390,11 @@ function expression_start(tokens, stack, start, qasm)
         expr_head = QasmExpression(:frame)
     elseif start_token[end] ∈ (string_token, integer_token, float_token, hex, oct, bin, irrational, dot, boolean, duration_literal)
         expr_head = parse_literal(pushfirst!(tokens, start_token), stack, start, qasm)
-    elseif start_token[end] ∈ (mutable, readonly, const_token)
-        expr_head = parse_identifier(start_token, qasm)
+    elseif start_token[end] ∈ (mutable, readonly, const_token) && next_token[end] == classical_type
+        type       = parse_classical_type(tokens, stack, start, qasm)
+        is_mutable = (start_token[end] == mutable)
+        header     = is_mutable ? :classical_declaration : :const_declaration
+        expr_head  = QasmExpression(header, type, parse_expression(tokens, stack, start, qasm))
     elseif start_token[end] == dim_token
         raw_dim   = read_raw(start_token, qasm)
         dim       = replace(replace(raw_dim, " "=>""), "#dim="=>"")
@@ -453,8 +456,9 @@ function parse_binary_op(left_hand_side, tokens, stack, start, qasm)
     end
 end
 
-function parse_unary_op(expr_head, tokens, stack, start, qasm)
-    unary_op_symbol::Symbol = Symbol(expr_head.args[1]::String)
+function parse_unary_op(tokens, stack, start, qasm)
+    start_token = popfirst!(tokens)
+    unary_op_symbol::Symbol = Symbol(read_raw(start_token, qasm))
     unary_op_symbol ∈ (:~, :!, :-) || throw(QasmParseError("invalid unary operator $unary_op_symbol.", stack, start, qasm))
     next_token_is_paren = first(tokens)[end] == lparen
     next_expr = parse_expression(tokens, stack, start, qasm)
@@ -498,15 +502,8 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
     next_token             = first(tokens)
     if next_token[end] ∈ (semicolon, comma) || start_token_type ∈ (lbracket, lbrace)
         expr = expr_head
-    elseif start_token_type == operator
-        expr           = parse_unary_op(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == colon
         expr       = parse_range(expr_head, tokens, stack, start, qasm)
-    elseif next_token[end] == classical_type && start_token_type ∈ (mutable, readonly, const_token)
-        type       = parse_classical_type(tokens, stack, start, qasm)
-        is_mutable = (start_token_type == mutable)
-        header     = is_mutable ? :classical_declaration : :const_declaration
-        expr       = QasmExpression(header, type, parse_expression(tokens, stack, start, qasm))
     elseif start_token_type ∈ (classical_type, frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
         expr      = QasmExpression(:classical_declaration, expr_head, parse_expression(tokens, stack, start, qasm))
     elseif next_token[end] == assignment
