@@ -381,15 +381,20 @@ function expression_start(tokens, stack, start, qasm)
         if !isempty(tokens) && first(tokens)[end] == lparen
             interior = extract_expression(tokens, lparen, rparen, stack, start, qasm)
             expr_head = QasmExpression(:cast, raw_expr, parse_expression(interior, stack, start, qasm))
+        elseif !isempty(tokens) && first(tokens)[end] == identifier
+            expr_head = QasmExpression(:classical_declaration, raw_expr, parse_expression(tokens, stack, start, qasm))
         else
             expr_head = raw_expr
         end
-    elseif start_token[end] == waveform_token
+    elseif start_token[end] == waveform_token && next_token[end] != identifier
         expr_head = QasmExpression(:waveform)
-    elseif start_token[end] == frame_token
+    elseif start_token[end] == frame_token && next_token[end] != identifier
         expr_head = QasmExpression(:frame)
     elseif start_token[end] ∈ (string_token, integer_token, float_token, hex, oct, bin, irrational, dot, boolean, duration_literal)
         expr_head = parse_literal(pushfirst!(tokens, start_token), stack, start, qasm)
+    elseif start_token[end] ∈ (frame_token, waveform_token) && next_token[end] == identifier
+        raw_expr  = parse_expression([start_token, (-1, Int32(-1), semicolon)], stack, start, qasm)
+        expr_head = QasmExpression(:classical_declaration, raw_expr, parse_expression(tokens, stack, start, qasm))
     elseif start_token[end] ∈ (mutable, readonly, const_token) && next_token[end] == classical_type
         type       = parse_classical_type(tokens, stack, start, qasm)
         is_mutable = (start_token[end] == mutable)
@@ -504,12 +509,10 @@ function parse_expression(tokens::Vector{Tuple{Int64, Int32, Token}}, stack, sta
         expr = expr_head
     elseif next_token[end] == colon
         expr       = parse_range(expr_head, tokens, stack, start, qasm)
-    elseif start_token_type ∈ (classical_type, frame_token, waveform_token) && (next_token[end] ∈ (lbracket, identifier))
-        expr      = QasmExpression(:classical_declaration, expr_head, parse_expression(tokens, stack, start, qasm))
     elseif next_token[end] == assignment
-        expr      = parse_classical_assignment(expr_head, tokens, stack, start, qasm)
+        expr       = parse_classical_assignment(expr_head, tokens, stack, start, qasm)
     elseif next_token[end] == operator
-        expr      = parse_binary_op(expr_head, tokens, stack, start, qasm)
+        expr       = parse_binary_op(expr_head, tokens, stack, start, qasm)
     else # either a gate call or function call
         arguments  = parse_arguments_list(tokens, stack, start, qasm)
         next_token = first(tokens)
