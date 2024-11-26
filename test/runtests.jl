@@ -282,6 +282,14 @@ Quasar.builtin_gates[] = complex_builtin_gates
         visitor(parsed)
         @test visitor.classical_defs["one"].val   == BitVector((false, false))
         @test only(visitor.classical_defs["first"].val) == false
+        qasm = """
+        array[int[8], 2] one = [1, 1];
+        array[int[32], 2] two = [0, 0];
+        let concatenated = one ++ two;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("only arrays of the same element type can be concatenated") visitor(parsed)
     end
     @testset "Randomized Benchmarking" begin
         qasm = """
