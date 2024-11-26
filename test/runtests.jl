@@ -192,6 +192,85 @@ Quasar.builtin_gates[] = complex_builtin_gates
                                        (type="gphase", arguments=InstructionArgument[2*π], targets=[0, 1], controls=[0=>0, 1=>1], exponent=1.0),
                                       ]
     end
+    @testset "Qubit aliasing" begin
+        qasm = """
+        qubit[2] one;
+        qubit[2] two;
+        // Aliased register of four qubits
+        let concatenated = two ++ one;
+        // First qubit in aliased qubit array
+        let first = concatenated[0];
+        // Last qubit in aliased qubit array
+        let last = concatenated[-1];
+        let new_cat = concatenated;
+        h concatenated[2];
+        x concatenated[1];
+        y first;
+        z last;
+        i new_cat[0];
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test visitor.instructions == [(type="h", arguments=InstructionArgument[], targets=[0], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="x", arguments=InstructionArgument[], targets=[3], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="y", arguments=InstructionArgument[], targets=[2], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="z", arguments=InstructionArgument[], targets=[1], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="i", arguments=InstructionArgument[], targets=[2], controls=Pair{Int,Int}[], exponent=1.0),
+                                      ]
+        qasm = """
+        qubit[2] one;
+        bit[2] two = "10";
+        let concatenated = two ++ one;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("cannot concatenate qubit and classical arrays") visitor(parsed)
+
+        qasm = """
+        qubit[2] one;
+        qubit[2] two;
+        let concatenated = two - one;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("right hand side of alias must be either an identifier or concatenation") visitor(parsed)
+    end
+    @testset "Classical aliasing" begin
+        qasm = """
+        bit[2] one = "01";
+        bit[2] two = "10";
+        // Aliased register of four bits
+        let concatenated = two ++ one; // "1001"
+        // First bit in aliased qubit array
+        let first   = concatenated[0];
+        // Last qubit in aliased qubit array
+        let last    = concatenated[-1];
+        let new_cat = concatenated;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("classical array concatenation not yet supported!") visitor(parsed)
+        #@test collect(visitor.classical_defs["concatenated"].val) == BitVector((true, false, false, true))
+        #@test visitor.classical_defs["first"].val == true
+        #@test visitor.classical_defs["last"].val == true
+        #@test collect(visitor.classical_defs["new_cat"].val) == BitVector((true, false, false, true))
+        # test that these are *references*
+        qasm = """
+        bit[2] one = "01";
+        bit[2] two = "10";
+        // Aliased register of four bits
+        let concatenated = one; // "01"
+        // First bit in aliased qubit array
+        let first   = concatenated[0];
+        concatenated[1] = false;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test visitor.classical_defs["one"].val   == BitVector((false, false))
+        @test only(visitor.classical_defs["first"].val) == false
+    end
     @testset "Randomized Benchmarking" begin
         qasm = """
         qubit[2] q;

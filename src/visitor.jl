@@ -304,6 +304,7 @@ function name(expr::QasmExpression)::String
     head(expr) == :gate_call          && return name(expr.args[1]::QasmExpression)
     head(expr) == :gate_definition    && return name(expr.args[1]::QasmExpression)
     head(expr) == :classical_assignment && return name(expr.args[1].args[2]::QasmExpression)
+    head(expr) == :alias              && return name(expr.args[1]::QasmExpression)
     head(expr) == :hw_qubit           && return replace(expr.args[1], "\$"=>"")
     throw(QasmVisitorError("name not defined for expressions of type $(head(expr))"))
 end
@@ -323,8 +324,14 @@ function _evaluate_qubits(::Val{:indexed_identifier}, v, qubit_expr::QasmExpress
     haskey(mapping, qubit_name) || throw(QasmVisitorError("Missing input variable '$qubit_name'.", "NameError"))
     qubit_ix   = v(qubit_expr.args[2]::QasmExpression)
     qubits     = Iterators.flatmap(qubit_ix) do rq
-        haskey(mapping, qubit_name * "[$rq]") || throw(QasmVisitorError("Invalid qubit index '$rq' in '$qubit_name'.", "IndexError"))
-        return mapping[qubit_name * "[$rq]"]
+        if rq >= 0
+            haskey(mapping, qubit_name * "[$rq]") || throw(QasmVisitorError("Invalid qubit index '$rq' in '$qubit_name'.", "IndexError"))
+            return mapping[qubit_name * "[$rq]"]
+        else
+            qubit_size = length(mapping[qubit_name])
+            haskey(mapping, qubit_name * "[$(qubit_size + rq)]") || throw(QasmVisitorError("Invalid qubit index '$rq' in '$qubit_name'.", "IndexError"))
+            return mapping[qubit_name * "[$(qubit_size + rq)]"]
+        end
     end
     return collect(qubits)
 end
@@ -605,6 +612,58 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
         if !case_found
             isnothing(default) && throw(QasmVisitorError("no case matched and no default defined."))
             foreach(v, convert(Vector{QasmExpression}, all_cases[default].args))
+        end
+    elseif head(program_expr) == :alias
+        alias_name = name(program_expr)
+        right_hand_side = program_expr.args[1].args[1].args[end]
+        if head(right_hand_side) == :binary_op
+            right_hand_side.args[1] == Symbol("++") || throw(QasmVisitorError("right hand side of alias must be either an identifier or concatenation"))
+            concat_left    = right_hand_side.args[2]
+            concat_right   = right_hand_side.args[3]
+            is_left_qubit  = haskey(qubit_mapping(v), name(concat_left))
+            is_right_qubit = haskey(qubit_mapping(v), name(concat_right))
+            (is_left_qubit ⊻ is_right_qubit) && throw(QasmVisitorError("cannot concatenate qubit and classical arrays"))
+            if is_left_qubit
+                left_qs  = v(concat_left)
+                right_qs = v(concat_right)
+                alias_qubits = collect(vcat(left_qs, right_qs))
+                qubit_size   = length(alias_qubits)
+                qubit_defs(v)[alias_name]    = Qubit(alias_name, qubit_size)
+                qubit_mapping(v)[alias_name] = alias_qubits
+                for qubit_i in 0:qubit_size-1
+                    qubit_mapping(v)["$alias_name[$qubit_i]"] = [alias_qubits[qubit_i+1]]
+                end
+            else # both classical
+                throw(QasmVisitorError("classical array concatenation not yet supported!"))
+            end
+        elseif head(right_hand_side) == :identifier
+            referent_name = name(right_hand_side)
+            is_qubit      = haskey(qubit_mapping(v), referent_name)
+            if is_qubit
+                qubit_defs(v)[alias_name]    = qubit_defs(v)[referent_name]
+                qubit_mapping(v)[alias_name] = qubit_mapping(v)[referent_name]
+                qubit_size = length(qubit_mapping(v)[alias_name])
+                for qubit_i in 0:qubit_size-1
+                    qubit_mapping(v)["$alias_name[$qubit_i]"] = qubit_mapping(v)["$referent_name[$qubit_i]"]
+                end
+            else
+                classical_defs(v)[alias_name] = classical_defs(v)[referent_name]
+            end
+        elseif head(right_hand_side) == :indexed_identifier
+            referent_name = name(right_hand_side)
+            is_qubit      = haskey(qubit_mapping(v), referent_name)
+            if is_qubit
+                alias_qubits = v(right_hand_side)
+                qubit_size   = length(alias_qubits)
+                qubit_defs(v)[alias_name]    = Qubit(alias_name, qubit_size)
+                qubit_mapping(v)[alias_name] = collect(alias_qubits)
+                for qubit_i in 0:qubit_size-1
+                    qubit_mapping(v)["$alias_name[$qubit_i]"] = [alias_qubits[qubit_i+1]]
+                end
+            else
+                referent = classical_defs(v)[referent_name]
+                classical_defs(v)[alias_name] = ClassicalVariable(alias_name, referent.type, view(referent.val, v(right_hand_side.args[end]) .+ 1), referent.is_const)
+            end
         end
     elseif head(program_expr) == :identifier
         id_name = name(program_expr)

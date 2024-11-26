@@ -711,6 +711,8 @@ function parse_qasm(clean_tokens::Vector{Tuple{Int64, Int32, Token}}, qasm::Stri
             push!(stack, delay_expr)
         elseif token == end_token
             push!(stack, QasmExpression(:end))
+        elseif token == alias
+            push!(stack, QasmExpression(:alias, parse_expression(clean_tokens, stack, start, qasm)))
         elseif token == identifier || token == builtin_gate
             clean_tokens = pushfirst!(clean_tokens, (start, len, token))
             expr         = parse_expression(clean_tokens, stack, start, qasm)
