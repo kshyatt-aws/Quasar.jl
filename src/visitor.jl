@@ -640,7 +640,7 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
                 if left_array.type isa SizedBitVector
                     classical_defs(v)[alias_name] = ClassicalVariable(alias_name, new_size, vcat(left_array.val, right_array.val), false)
                 else
-                    left_array.type.type == right_array.type.type || throw(QasmVisitorError("only arrays of the same element type can be concatenated"))
+                    left_array.type == right_array.type || throw(QasmVisitorError("only arrays of the same element type can be concatenated"))
                     classical_defs(v)[alias_name] = ClassicalVariable(alias_name, left_array.type, vcat(left_array.val, right_array.val), false)
                 end
             end

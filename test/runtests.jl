@@ -277,6 +277,8 @@ Quasar.builtin_gates[] = complex_builtin_gates
         array[uint[8], 2] uint_two = [2, 3];
         array[float[16], 2] float_one = [1.0, 2.0];
         array[float[16], 2] float_two = [2.0, 3.0];
+        array[angle[16], 2] angle_one = [1.0, 2.0];
+        array[angle[16], 2] angle_two = [2.0, 3.0];
         array[complex[float[16]], 2] complex_one = [1.0im, 2.0];
         array[complex[float[16]], 2] complex_two = [2.0, 3.0im];
         // Aliased register of four bits
@@ -287,6 +289,7 @@ Quasar.builtin_gates[] = complex_builtin_gates
         let int_concatenated = int_one ++ int_two;
         let uint_concatenated = uint_one ++ uint_two;
         let float_concatenated = float_one ++ float_two;
+        let angle_concatenated = angle_one ++ angle_two;
         let complex_concatenated = complex_one ++ complex_two;
         """
         parsed  = parse_qasm(qasm)
@@ -297,6 +300,7 @@ Quasar.builtin_gates[] = complex_builtin_gates
         @test visitor.classical_defs["int_concatenated"].val == [1, 2, 2, 3]
         @test visitor.classical_defs["uint_concatenated"].val == [1, 2, 2, 3]
         @test visitor.classical_defs["float_concatenated"].val == [1.0, 2.0, 2.0, 3.0]
+        @test visitor.classical_defs["angle_concatenated"].val == [1.0, 2.0, 2.0, 3.0]
         @test visitor.classical_defs["complex_concatenated"].val == [1im, 2.0, 2.0, 3im]
         qasm = """
         array[int[8], 2] one = [1, 1];
