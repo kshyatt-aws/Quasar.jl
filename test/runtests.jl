@@ -250,11 +250,23 @@ Quasar.builtin_gates[] = complex_builtin_gates
         """
         parsed  = parse_qasm(qasm)
         visitor = QasmProgramVisitor()
-        @test_throws Quasar.QasmVisitorError("classical array concatenation not yet supported!") visitor(parsed)
-        #@test collect(visitor.classical_defs["concatenated"].val) == BitVector((true, false, false, true))
-        #@test visitor.classical_defs["first"].val == true
-        #@test visitor.classical_defs["last"].val == true
-        #@test collect(visitor.classical_defs["new_cat"].val) == BitVector((true, false, false, true))
+        visitor(parsed)
+        @test collect(visitor.classical_defs["concatenated"].val) == BitVector((true, false, false, true))
+        @test only(visitor.classical_defs["first"].val) == true
+        @test only(visitor.classical_defs["last"].val) == true
+        @test collect(visitor.classical_defs["new_cat"].val) == BitVector((true, false, false, true))
+        qasm = """
+        bit[2] one = "01";
+        bit[2] two = "10";
+        // Aliased register of four bits
+        let concatenated = two ++ one; // "1001"
+        concatenated[0]  = false;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test collect(visitor.classical_defs["concatenated"].val) == BitVector((false, false, false, true))
+        @test collect(visitor.classical_defs["two"].val)          == BitVector((true, false))
         # test that these are *references*
         qasm = """
         bit[2] one = "01";
