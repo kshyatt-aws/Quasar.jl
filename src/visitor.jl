@@ -304,6 +304,7 @@ function name(expr::QasmExpression)::String
     head(expr) == :gate_call          && return name(expr.args[1]::QasmExpression)
     head(expr) == :gate_definition    && return name(expr.args[1]::QasmExpression)
     head(expr) == :classical_assignment && return name(expr.args[1].args[2]::QasmExpression)
+    head(expr) == :alias              && return name(expr.args[1]::QasmExpression)
     head(expr) == :hw_qubit           && return replace(expr.args[1], "\$"=>"")
     throw(QasmVisitorError("name not defined for expressions of type $(head(expr))"))
 end
@@ -323,8 +324,14 @@ function _evaluate_qubits(::Val{:indexed_identifier}, v, qubit_expr::QasmExpress
     haskey(mapping, qubit_name) || throw(QasmVisitorError("Missing input variable '$qubit_name'.", "NameError"))
     qubit_ix   = v(qubit_expr.args[2]::QasmExpression)
     qubits     = Iterators.flatmap(qubit_ix) do rq
-        haskey(mapping, qubit_name * "[$rq]") || throw(QasmVisitorError("Invalid qubit index '$rq' in '$qubit_name'.", "IndexError"))
-        return mapping[qubit_name * "[$rq]"]
+        if rq >= 0
+            haskey(mapping, qubit_name * "[$rq]") || throw(QasmVisitorError("Invalid qubit index '$rq' in '$qubit_name'.", "IndexError"))
+            return mapping[qubit_name * "[$rq]"]
+        else
+            qubit_size = length(mapping[qubit_name])
+            haskey(mapping, qubit_name * "[$(qubit_size + rq)]") || throw(QasmVisitorError("Invalid qubit index '$rq' in '$qubit_name'.", "IndexError"))
+            return mapping[qubit_name * "[$(qubit_size + rq)]"]
+        end
     end
     return collect(qubits)
 end
@@ -451,6 +458,64 @@ function visit_gate_call(v::AbstractVisitor, program_expr::QasmExpression)
     return
 end
 
+function visit_function_call(v, expr, function_name)
+    function_def  = function_defs(v)[function_name]
+    function_body = function_def.body::Vector{QasmExpression}
+    declared_args = only(function_def.arguments.args)::QasmExpression
+    provided_args = only(expr.args[2].args)::QasmExpression
+    function_v    = QasmFunctionVisitor(v, declared_args, provided_args)
+    return_val    = nothing
+    body_exprs::Vector{QasmExpression} = head(function_body[1]) == :scope ? function_body[1].args : function_body
+    for f_expr in body_exprs
+        if head(f_expr) == :return
+            return_val = function_v(f_expr.args[1])
+        else
+            function_v(f_expr)
+        end
+    end
+    # remap qubits and classical variables
+    function_args = if head(declared_args) == :array_literal
+        convert(Vector{QasmExpression}, declared_args.args)::Vector{QasmExpression}
+    else
+        declared_args
+    end
+    called_args = if head(provided_args) == :array_literal
+        convert(Vector{QasmExpression}, provided_args.args)::Vector{QasmExpression}
+    else
+        provided_args
+    end
+    reverse_arguments_map = Dict{QasmExpression, QasmExpression}(zip(called_args, function_args))
+    reverse_qubits_map    = Dict{Int, Int}()
+    for variable in filter(v->head(v) ∈ (:identifier, :indexed_identifier), keys(reverse_arguments_map))
+        variable_name = name(variable)
+        if haskey(classical_defs(v), variable_name) && classical_defs(v)[variable_name].type isa SizedArray && head(reverse_arguments_map[variable]) != :const_declaration
+            inner_variable_name = name(reverse_arguments_map[variable])
+            new_val = classical_defs(function_v)[inner_variable_name].val
+            back_assignment = QasmExpression(:classical_assignment, QasmExpression(:binary_op, Symbol("="), variable, new_val))
+            v(back_assignment)
+        elseif haskey(qubit_defs(v), variable_name)
+            outer_context_map = only(evaluate_qubits(v, variable))
+            inner_context_map = only(evaluate_qubits(function_v, reverse_arguments_map[variable].args[1]))
+            reverse_qubits_map[inner_context_map] = outer_context_map
+        end
+    end
+    mapper = isempty(reverse_qubits_map) ? identity : ix->remap(ix, reverse_qubits_map)
+    push!(v, map(mapper, function_v.instructions))
+    return return_val
+end
+
+function declaration_init(v, expr::QasmExpression)
+    var_type = expr.args[1].args[1]
+    init = if var_type isa SizedNumber
+            undef
+        elseif var_type isa SizedArray
+            fill(undef, v(var_type.size))
+        elseif var_type isa SizedBitVector
+            falses(max(0, v(var_type.size)))
+        end
+    return init, var_type 
+end
+
 (v::AbstractVisitor)(i::Number) = i
 (v::AbstractVisitor)(i::String) = i
 (v::AbstractVisitor)(i::BitVector) = i
@@ -548,6 +613,58 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
             isnothing(default) && throw(QasmVisitorError("no case matched and no default defined."))
             foreach(v, convert(Vector{QasmExpression}, all_cases[default].args))
         end
+    elseif head(program_expr) == :alias
+        alias_name = name(program_expr)
+        right_hand_side = program_expr.args[1].args[1].args[end]
+        if head(right_hand_side) == :binary_op
+            right_hand_side.args[1] == Symbol("++") || throw(QasmVisitorError("right hand side of alias must be either an identifier or concatenation"))
+            concat_left    = right_hand_side.args[2]
+            concat_right   = right_hand_side.args[3]
+            is_left_qubit  = haskey(qubit_mapping(v), name(concat_left))
+            is_right_qubit = haskey(qubit_mapping(v), name(concat_right))
+            (is_left_qubit ⊻ is_right_qubit) && throw(QasmVisitorError("cannot concatenate qubit and classical arrays"))
+            if is_left_qubit
+                left_qs  = v(concat_left)
+                right_qs = v(concat_right)
+                alias_qubits = collect(vcat(left_qs, right_qs))
+                qubit_size   = length(alias_qubits)
+                qubit_defs(v)[alias_name]    = Qubit(alias_name, qubit_size)
+                qubit_mapping(v)[alias_name] = alias_qubits
+                for qubit_i in 0:qubit_size-1
+                    qubit_mapping(v)["$alias_name[$qubit_i]"] = [alias_qubits[qubit_i+1]]
+                end
+            else # both classical
+                throw(QasmVisitorError("classical array concatenation not yet supported!"))
+            end
+        elseif head(right_hand_side) == :identifier
+            referent_name = name(right_hand_side)
+            is_qubit      = haskey(qubit_mapping(v), referent_name)
+            if is_qubit
+                qubit_defs(v)[alias_name]    = qubit_defs(v)[referent_name]
+                qubit_mapping(v)[alias_name] = qubit_mapping(v)[referent_name]
+                qubit_size = length(qubit_mapping(v)[alias_name])
+                for qubit_i in 0:qubit_size-1
+                    qubit_mapping(v)["$alias_name[$qubit_i]"] = qubit_mapping(v)["$referent_name[$qubit_i]"]
+                end
+            else
+                classical_defs(v)[alias_name] = classical_defs(v)[referent_name]
+            end
+        elseif head(right_hand_side) == :indexed_identifier
+            referent_name = name(right_hand_side)
+            is_qubit      = haskey(qubit_mapping(v), referent_name)
+            if is_qubit
+                alias_qubits = v(right_hand_side)
+                qubit_size   = length(alias_qubits)
+                qubit_defs(v)[alias_name]    = Qubit(alias_name, qubit_size)
+                qubit_mapping(v)[alias_name] = collect(alias_qubits)
+                for qubit_i in 0:qubit_size-1
+                    qubit_mapping(v)["$alias_name[$qubit_i]"] = [alias_qubits[qubit_i+1]]
+                end
+            else
+                referent = classical_defs(v)[referent_name]
+                classical_defs(v)[alias_name] = ClassicalVariable(alias_name, referent.type, view(referent.val, v(right_hand_side.args[end]) .+ 1), referent.is_const)
+            end
+        end
     elseif head(program_expr) == :identifier
         id_name = name(program_expr)
         haskey(classical_defs(v), id_name) && return classical_defs(v)[id_name].val
@@ -610,7 +727,7 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
             condition_value = while_v(program_expr.args[1])
         end
     elseif head(program_expr) == :classical_assignment
-        op = program_expr.args[1].args[1]::Symbol
+        op              = program_expr.args[1].args[1]::Symbol
         left_hand_side  = program_expr.args[1].args[2]::QasmExpression
         right_hand_side = program_expr.args[1].args[3]
         var_name  = name(left_hand_side)::String
@@ -651,14 +768,7 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
             end
         end
     elseif head(program_expr) == :classical_declaration
-        var_type = program_expr.args[1].args[1]
-        init = if var_type isa SizedNumber
-                undef
-            elseif var_type isa SizedArray
-                fill(undef, v(var_type.size))
-            elseif var_type isa SizedBitVector
-                falses(max(0, v(var_type.size)))
-            end
+        init, var_type = declaration_init(v, program_expr)
         # no initial value
         if head(program_expr.args[2]) == :identifier
             var_name = name(program_expr.args[2])
@@ -671,14 +781,7 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
         end
     elseif head(program_expr) == :const_declaration
         head(program_expr.args[2]) == :classical_assignment || throw(QasmVisitorError("const declaration must assign an initial value."))
-        var_type = program_expr.args[1].args[1]
-        init = if var_type isa SizedNumber
-                undef
-            elseif var_type isa SizedArray
-                fill(undef, v(var_type.size))
-            elseif var_type isa SizedBitVector
-                falses(max(0, v(var_type.size)))
-            end
+        init, var_type = declaration_init(v, program_expr)
         op, left_hand_side, right_hand_side = program_expr.args[2].args[1].args
         var_name = name(left_hand_side)
         v.classical_defs[var_name] = ClassicalVariable(var_name, var_type, init, false)
@@ -737,54 +840,7 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
             return return_val[1]
         else
             hasfunction(v, function_name) || throw(QasmVisitorError("function $function_name not defined!"))
-            function_def  = function_defs(v)[function_name]
-            function_body = function_def.body::Vector{QasmExpression}
-            declared_args = only(function_def.arguments.args)::QasmExpression
-            provided_args = only(program_expr.args[2].args)::QasmExpression
-            function_v    = QasmFunctionVisitor(v, declared_args, provided_args)
-            return_val    = nothing
-            body_exprs::Vector{QasmExpression} = head(function_body[1]) == :scope ? function_body[1].args : function_body
-            for f_expr in body_exprs
-                if head(f_expr) == :return
-                    return_val = function_v(f_expr.args[1])
-                else
-                    function_v(f_expr)
-                end
-            end
-            # remap qubits and classical variables
-            function_args = if head(declared_args) == :array_literal
-                convert(Vector{QasmExpression}, declared_args.args)::Vector{QasmExpression}
-            else
-                declared_args
-            end
-            called_args = if head(provided_args) == :array_literal
-                convert(Vector{QasmExpression}, provided_args.args)::Vector{QasmExpression}
-            else
-                provided_args
-            end
-            arguments_map         = Dict{QasmExpression, QasmExpression}(zip(function_args, called_args))
-            reverse_arguments_map = Dict{QasmExpression, QasmExpression}(zip(called_args, function_args))
-            reverse_qubits_map    = Dict{Int, Int}()
-            for variable in keys(reverse_arguments_map)
-                if head(variable) ∈ (:identifier, :indexed_identifier)
-                    variable_name = name(variable)
-                    if haskey(classical_defs(v), variable_name) && classical_defs(v)[variable_name].type isa SizedArray
-                        if head(reverse_arguments_map[variable]) != :const_declaration
-                            inner_variable_name = name(reverse_arguments_map[variable])
-                            new_val = classical_defs(function_v)[inner_variable_name].val
-                            back_assignment = QasmExpression(:classical_assignment, QasmExpression(:binary_op, Symbol("="), variable, new_val))
-                            v(back_assignment)
-                        end
-                    elseif haskey(qubit_defs(v), variable_name)
-                        outer_context_map = only(evaluate_qubits(v, variable))
-                        inner_context_map = only(evaluate_qubits(function_v, reverse_arguments_map[variable].args[1]))
-                        reverse_qubits_map[inner_context_map] = outer_context_map
-                    end
-                end
-            end
-            mapper = isempty(reverse_qubits_map) ? identity : ix->remap(ix, reverse_qubits_map)
-            push!(v, map(mapper, function_v.instructions))
-            return return_val
+            return visit_function_call(v, program_expr, function_name)
         end
     elseif head(program_expr) == :function_definition
         function_def         = program_expr.args

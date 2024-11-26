@@ -192,6 +192,85 @@ Quasar.builtin_gates[] = complex_builtin_gates
                                        (type="gphase", arguments=InstructionArgument[2*π], targets=[0, 1], controls=[0=>0, 1=>1], exponent=1.0),
                                       ]
     end
+    @testset "Qubit aliasing" begin
+        qasm = """
+        qubit[2] one;
+        qubit[2] two;
+        // Aliased register of four qubits
+        let concatenated = two ++ one;
+        // First qubit in aliased qubit array
+        let first = concatenated[0];
+        // Last qubit in aliased qubit array
+        let last = concatenated[-1];
+        let new_cat = concatenated;
+        h concatenated[2];
+        x concatenated[1];
+        y first;
+        z last;
+        i new_cat[0];
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test visitor.instructions == [(type="h", arguments=InstructionArgument[], targets=[0], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="x", arguments=InstructionArgument[], targets=[3], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="y", arguments=InstructionArgument[], targets=[2], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="z", arguments=InstructionArgument[], targets=[1], controls=Pair{Int,Int}[], exponent=1.0),
+                                       (type="i", arguments=InstructionArgument[], targets=[2], controls=Pair{Int,Int}[], exponent=1.0),
+                                      ]
+        qasm = """
+        qubit[2] one;
+        bit[2] two = "10";
+        let concatenated = two ++ one;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("cannot concatenate qubit and classical arrays") visitor(parsed)
+
+        qasm = """
+        qubit[2] one;
+        qubit[2] two;
+        let concatenated = two - one;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("right hand side of alias must be either an identifier or concatenation") visitor(parsed)
+    end
+    @testset "Classical aliasing" begin
+        qasm = """
+        bit[2] one = "01";
+        bit[2] two = "10";
+        // Aliased register of four bits
+        let concatenated = two ++ one; // "1001"
+        // First bit in aliased qubit array
+        let first   = concatenated[0];
+        // Last qubit in aliased qubit array
+        let last    = concatenated[-1];
+        let new_cat = concatenated;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        @test_throws Quasar.QasmVisitorError("classical array concatenation not yet supported!") visitor(parsed)
+        #@test collect(visitor.classical_defs["concatenated"].val) == BitVector((true, false, false, true))
+        #@test visitor.classical_defs["first"].val == true
+        #@test visitor.classical_defs["last"].val == true
+        #@test collect(visitor.classical_defs["new_cat"].val) == BitVector((true, false, false, true))
+        # test that these are *references*
+        qasm = """
+        bit[2] one = "01";
+        bit[2] two = "10";
+        // Aliased register of four bits
+        let concatenated = one; // "01"
+        // First bit in aliased qubit array
+        let first   = concatenated[0];
+        concatenated[1] = false;
+        """
+        parsed  = parse_qasm(qasm)
+        visitor = QasmProgramVisitor()
+        visitor(parsed)
+        @test visitor.classical_defs["one"].val   == BitVector((false, false))
+        @test only(visitor.classical_defs["first"].val) == false
+    end
     @testset "Randomized Benchmarking" begin
         qasm = """
         qubit[2] q;
@@ -1400,31 +1479,31 @@ Quasar.builtin_gates[] = complex_builtin_gates
         @test visitor.classical_defs["array_2"].val == zeros(Int, 10) 
         @test visitor.classical_defs["array_3"].val == [1, 2, 3, 4, 0, 6, 0, 8, 0, 10]
     end
-    # TODO
-    #=@testset "Rotation parameter expressions" begin
-        @testset  "Operation: $operation" for (operation, state_vector) in
+    @testset "Rotation parameter expressions" begin
+        @testset  "Operation: $operation, argument: $arg" for (operation, arg) in
             [
-                ["rx(π) q[0];", [0, -im]],
-                ["rx(pi) q[0];", [0, -im]],
-                ["rx(ℇ) q[0];", [0.21007866, -0.97768449im]],
-                ["rx(euler) q[0];", [0.21007866, -0.97768449im]],
-                ["rx(τ) q[0];", [-1, 0]],
-                ["rx(tau) q[0];", [-1, 0]],
-                ["rx(pi + pi) q[0];", [-1, 0]],
-                ["rx(pi - pi) q[0];", [1, 0]],
-                ["rx(-pi + pi) q[0];", [1, 0]],
-                ["rx(pi * 2) q[0];", [-1, 0]],
-                ["rx(pi / 2) q[0];", [0.70710678, -0.70710678im]],
-                ["rx(-pi / 2) q[0];", [0.70710678, 0.70710678im]],
-                ["rx(-pi) q[0];", [0, im]],
-                ["rx(pi + 2 * pi) q[0];", [0, im]],
-                ["rx(pi + pi / 2) q[0];", [-0.70710678, -0.70710678im]],
-                ["rx((pi / 4) + (pi / 2) / 2) q[0];", [0.70710678, -0.70710678im]],
-                ["rx(0) q[0];", [1, 0]],
-                ["rx(0 + 0) q[0];", [1, 0]],
-                ["rx((1.1 + 2.04) / 2) q[0];", [0.70738827, -0.70682518im]],
-                ["rx((6 - 2.86) * 0.5) q[0];", [0.70738827, -0.70682518im]],
-                ["rx(pi ** 2) q[0];", [0.22058404, 0.97536797im]],
+                ["rx(π) q[0];", π],
+                ["rx(pi) q[0];", π],
+                ["rx(ℇ) q[0];", ℯ],
+                ["rx(euler) q[0];", ℯ],
+                ["rx(τ) q[0];", 2π],
+                ["rx(tau) q[0];", 2π],
+                ["rx(pi + pi) q[0];", 2π],
+                ["rx(pi - pi) q[0];", 0],
+                ["rx(-pi + pi) q[0];", 0],
+                ["rx(-pi - pi) q[0];", -2π],
+                ["rx(pi * 2) q[0];", 2π],
+                ["rx(pi / 2) q[0];", π/2],
+                ["rx(-pi / 2) q[0];", -π/2],
+                ["rx(-pi) q[0];", -π],
+                ["rx(pi + 2 * pi) q[0];", 3π],
+                ["rx(pi + pi / 2) q[0];", 3π/2],
+                ["rx((pi / 4) + (pi / 2) / 2) q[0];", π/2],
+                ["rx(0) q[0];", 0],
+                ["rx(0 + 0) q[0];", 0],
+                ["rx((1.1 + 2.04) / 2) q[0];", 3.14/2],
+                ["rx((6 - 2.86) * 0.5) q[0];", (6 - 2.86) * 0.5],
+                ["rx(pi ** 2) q[0];", π^2],
             ]
             qasm = """
             OPENQASM 3.0;
@@ -1432,8 +1511,12 @@ Quasar.builtin_gates[] = complex_builtin_gates
             qubit[1] q;
             $operation
             """
+            parsed  = parse_qasm(qasm)
+            visitor = QasmProgramVisitor()
+            visitor(parsed)
+            @test visitor.instructions[1] == (type="rx", arguments=InstructionArgument[arg], targets=[0], controls=Pair{Int,Int}[], exponent=1.0)
         end
-    end=#
+    end
     @testset "Qubits with variable as size" begin
         qasm_string = """
         OPENQASM 3.0;
