@@ -27,35 +27,41 @@ struct SizedInt <: Integer
     SizedInt(sint::SizedInt) = new(sint.size)
 end
 Base.show(io::IO, s::SizedInt) = print(io, "SizedInt{$(s.size.args[end])}")
+Base.:(==)(i1::SizedInt, i2::SizedInt) = i1.size == i2.size
 struct SizedUInt <: Unsigned 
     size::QasmExpression
     SizedUInt(size::QasmExpression) = new(size)
     SizedUInt(suint::SizedUInt) = new(suint.size)
 end
+Base.:(==)(ui1::SizedUInt, ui2::SizedUInt) = ui1.size == ui2.size
 Base.show(io::IO, s::SizedUInt) = print(io, "SizedUInt{$(s.size.args[end])}")
 struct SizedFloat <: AbstractFloat
     size::QasmExpression
     SizedFloat(size::QasmExpression) = new(size)
     SizedFloat(sfloat::SizedFloat) = new(sfloat.size)
 end
+Base.:(==)(f1::SizedFloat, f2::SizedFloat) = f1.size == f2.size
 Base.show(io::IO, s::SizedFloat) = print(io, "SizedFloat{$(s.size.args[end])}")
 struct SizedAngle <: AbstractFloat
     size::QasmExpression
     SizedAngle(size::QasmExpression) = new(size)
     SizedAngle(sangle::SizedAngle) = new(sangle.size)
 end
+Base.:(==)(a1::SizedAngle, a2::SizedAngle) = a1.size == a2.size
 Base.show(io::IO, s::SizedAngle) = print(io, "SizedAngle{$(s.size.args[end])}")
 struct SizedComplex <: Number
     size::QasmExpression
     SizedComplex(size::QasmExpression) = new(size)
     SizedComplex(scomplex::SizedComplex) = new(scomplex.size)
 end
+Base.:(==)(c1::SizedComplex, c2::SizedComplex) = c1.size == c2.size
 Base.show(io::IO, s::SizedComplex) = print(io, "SizedComplex{$(s.size.args[end])}")
 
 struct SizedArray{T,N} <: AbstractArray{T, N} 
     type::T
     size::NTuple{N, Int}
 end
+Base.:(==)(a1::SizedArray{T, N}, a2::SizedArray{T, N}) where {T,N} = (a1.type == a2.type && a1.size == a2.size)
 function SizedArray(eltype::QasmExpression, size::QasmExpression)
     arr_size = if head(size) == :n_dims
         ntuple(i->0, size.args[1].args[1])

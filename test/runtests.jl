@@ -271,17 +271,21 @@ Quasar.builtin_gates[] = complex_builtin_gates
         qasm = """
         bit[2] one = "01";
         bit[2] two = "10";
+        array[int[8], 2] int_one = [1, 2];
+        array[int[8], 2] int_two = [2, 3];
         // Aliased register of four bits
         let concatenated = one; // "01"
         // First bit in aliased qubit array
         let first   = concatenated[0];
         concatenated[1] = false;
+        let int_concatenated = int_one ++ int_two;
         """
         parsed  = parse_qasm(qasm)
         visitor = QasmProgramVisitor()
         visitor(parsed)
         @test visitor.classical_defs["one"].val   == BitVector((false, false))
         @test only(visitor.classical_defs["first"].val) == false
+        @test visitor.classical_defs["int_concatenated"].val == [1, 2, 2, 3]
         qasm = """
         array[int[8], 2] one = [1, 1];
         array[int[32], 2] two = [0, 0];
