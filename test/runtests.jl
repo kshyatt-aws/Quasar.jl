@@ -1400,31 +1400,31 @@ Quasar.builtin_gates[] = complex_builtin_gates
         @test visitor.classical_defs["array_2"].val == zeros(Int, 10) 
         @test visitor.classical_defs["array_3"].val == [1, 2, 3, 4, 0, 6, 0, 8, 0, 10]
     end
-    # TODO
-    #=@testset "Rotation parameter expressions" begin
-        @testset  "Operation: $operation" for (operation, state_vector) in
+    @testset "Rotation parameter expressions" begin
+        @testset  "Operation: $operation, argument: $arg" for (operation, arg) in
             [
-                ["rx(π) q[0];", [0, -im]],
-                ["rx(pi) q[0];", [0, -im]],
-                ["rx(ℇ) q[0];", [0.21007866, -0.97768449im]],
-                ["rx(euler) q[0];", [0.21007866, -0.97768449im]],
-                ["rx(τ) q[0];", [-1, 0]],
-                ["rx(tau) q[0];", [-1, 0]],
-                ["rx(pi + pi) q[0];", [-1, 0]],
-                ["rx(pi - pi) q[0];", [1, 0]],
-                ["rx(-pi + pi) q[0];", [1, 0]],
-                ["rx(pi * 2) q[0];", [-1, 0]],
-                ["rx(pi / 2) q[0];", [0.70710678, -0.70710678im]],
-                ["rx(-pi / 2) q[0];", [0.70710678, 0.70710678im]],
-                ["rx(-pi) q[0];", [0, im]],
-                ["rx(pi + 2 * pi) q[0];", [0, im]],
-                ["rx(pi + pi / 2) q[0];", [-0.70710678, -0.70710678im]],
-                ["rx((pi / 4) + (pi / 2) / 2) q[0];", [0.70710678, -0.70710678im]],
-                ["rx(0) q[0];", [1, 0]],
-                ["rx(0 + 0) q[0];", [1, 0]],
-                ["rx((1.1 + 2.04) / 2) q[0];", [0.70738827, -0.70682518im]],
-                ["rx((6 - 2.86) * 0.5) q[0];", [0.70738827, -0.70682518im]],
-                ["rx(pi ** 2) q[0];", [0.22058404, 0.97536797im]],
+                ["rx(π) q[0];", π],
+                ["rx(pi) q[0];", π],
+                ["rx(ℇ) q[0];", ℯ],
+                ["rx(euler) q[0];", ℯ],
+                ["rx(τ) q[0];", 2π],
+                ["rx(tau) q[0];", 2π],
+                ["rx(pi + pi) q[0];", 2π],
+                ["rx(pi - pi) q[0];", 0],
+                ["rx(-pi + pi) q[0];", 0],
+                ["rx(-pi - pi) q[0];", -2π],
+                ["rx(pi * 2) q[0];", 2π],
+                ["rx(pi / 2) q[0];", π/2],
+                ["rx(-pi / 2) q[0];", -π/2],
+                ["rx(-pi) q[0];", -π],
+                ["rx(pi + 2 * pi) q[0];", 3π],
+                ["rx(pi + pi / 2) q[0];", 3π/2],
+                ["rx((pi / 4) + (pi / 2) / 2) q[0];", π/2],
+                ["rx(0) q[0];", 0],
+                ["rx(0 + 0) q[0];", 0],
+                ["rx((1.1 + 2.04) / 2) q[0];", 3.14/2],
+                ["rx((6 - 2.86) * 0.5) q[0];", (6 - 2.86) * 0.5],
+                ["rx(pi ** 2) q[0];", π^2],
             ]
             qasm = """
             OPENQASM 3.0;
@@ -1432,8 +1432,12 @@ Quasar.builtin_gates[] = complex_builtin_gates
             qubit[1] q;
             $operation
             """
+            parsed  = parse_qasm(qasm)
+            visitor = QasmProgramVisitor()
+            visitor(parsed)
+            @test visitor.instructions[1] == (type="rx", arguments=InstructionArgument[arg], targets=[0], controls=Pair{Int,Int}[], exponent=1.0)
         end
-    end=#
+    end
     @testset "Qubits with variable as size" begin
         qasm_string = """
         OPENQASM 3.0;
