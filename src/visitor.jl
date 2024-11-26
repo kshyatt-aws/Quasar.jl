@@ -634,7 +634,15 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
                     qubit_mapping(v)["$alias_name[$qubit_i]"] = [alias_qubits[qubit_i+1]]
                 end
             else # both classical
-                throw(QasmVisitorError("classical array concatenation not yet supported!"))
+                left_array  = classical_defs(v)[name(concat_left)]  
+                right_array = classical_defs(v)[name(concat_right)]  
+                new_size = QasmExpression(:binary_op, :+, only(size(left_array.type)), only(size(right_array.type))) 
+                if left_array.type isa SizedBitVector
+                    classical_defs(v)[alias_name] = ClassicalVariable(alias_name, new_size, vcat(left_array.val, right_array.val), false)
+                else
+                    left_array.type == right_array.type || throw(QasmVisitorError("only arrays of the same element type can be concatenated"))
+                    classical_defs(v)[alias_name] = ClassicalVariable(alias_name, left_array.type, vcat(left_array.val, right_array.val), false)
+                end
             end
         elseif head(right_hand_side) == :identifier
             referent_name = name(right_hand_side)
@@ -662,7 +670,12 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
                 end
             else
                 referent = classical_defs(v)[referent_name]
-                classical_defs(v)[alias_name] = ClassicalVariable(alias_name, referent.type, view(referent.val, v(right_hand_side.args[end]) .+ 1), referent.is_const)
+                ref_ixs  = v(right_hand_side.args[end])
+                ixs = map(ref_ixs) do ix
+                    ix >= 0 && return ix + 1
+                    ix <  0 && return v(length(referent.type)) + 1 + ix
+                end
+                classical_defs(v)[alias_name] = ClassicalVariable(alias_name, referent.type, view(referent.val, ixs), referent.is_const)
             end
         end
     elseif head(program_expr) == :identifier
