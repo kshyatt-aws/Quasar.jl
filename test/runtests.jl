@@ -1205,6 +1205,11 @@ Quasar.builtin_gates[] = complex_builtin_gates
         gate cxx_2 c, a {
             pow(1/2) @ pow(4) @ cx c, a;
         }
+        gate cxx_3 c, a {
+            pow(1/2) @ pow(4) @ cx c, a;
+            i c;
+            i a;
+        }
         gate cxxx c, a {
             pow(1) @ pow(two) @ cx c, a;
         }
@@ -1220,6 +1225,7 @@ Quasar.builtin_gates[] = complex_builtin_gates
         cx q1, q2;   // flip
         cxx_1 q1, q3;    // don't flip
         cxx_2 q1, q4;    // don't flip
+        pow(2) @ cxx_3 q1, q4; // don't flip
         cx q1, q5;    // flip
         x q3;       // flip
         x q4;       // flip
@@ -1236,6 +1242,12 @@ Quasar.builtin_gates[] = complex_builtin_gates
                         (type="u", arguments=InstructionArgument[π, 0, π], targets=[0, 1], controls=[0=>1], exponent=1.0),
                         (type="u", arguments=InstructionArgument[π, 0, π], targets=[0, 2], controls=[0=>1], exponent=2.0),
                         (type="u", arguments=InstructionArgument[π, 0, π], targets=[0, 3], controls=[0=>1], exponent=2.0),
+                        (type="u", arguments=InstructionArgument[π, 0, π], targets=[0, 3], controls=[0=>1], exponent=2.0),
+                        (type="i", arguments=InstructionArgument[], targets=[0], controls=Pair{Int,Int}[], exponent=1.0),
+                        (type="i", arguments=InstructionArgument[], targets=[3], controls=Pair{Int,Int}[], exponent=1.0),
+                        (type="u", arguments=InstructionArgument[π, 0, π], targets=[0, 3], controls=[0=>1], exponent=2.0),
+                        (type="i", arguments=InstructionArgument[], targets=[0], controls=Pair{Int,Int}[], exponent=1.0),
+                        (type="i", arguments=InstructionArgument[], targets=[3], controls=Pair{Int,Int}[], exponent=1.0),
                         (type="u", arguments=InstructionArgument[π, 0, π], targets=[0, 4], controls=[0=>1], exponent=1.0),
                         (type="u", arguments=InstructionArgument[π, 0, π], targets=[2], controls=Pair{Int,Int}[], exponent=1.0),
                         (type="u", arguments=InstructionArgument[π, 0, π], targets=[3], controls=Pair{Int,Int}[], exponent=1.0),

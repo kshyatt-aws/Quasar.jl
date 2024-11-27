@@ -19,6 +19,8 @@ Base.copy(qasm_expr::QasmExpression) = QasmExpression(qasm_expr.head, deepcopy(q
 
 head(qasm_expr::QasmExpression) = qasm_expr.head
 
+Base.convert(::Type{Vector{QasmExpression}}, expr::QasmExpression) = head(expr) == :array_literal ? convert(Vector{QasmExpression}, expr.args) : [expr]
+
 AbstractTrees.children(qasm_expr::QasmExpression) = qasm_expr.args
 AbstractTrees.printnode(io::IO, qasm_expr::QasmExpression) = print(io, "QasmExpression :$(qasm_expr.head)")
 
