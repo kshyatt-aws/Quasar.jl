@@ -367,25 +367,34 @@ end
 
 function handle_gate_modifiers(ixs, mods::Vector{QasmExpression}, control_qubits::Vector{Int}, is_gphase::Bool)
     for mod in Iterators.reverse(mods)
-        control_qubit = head(mod) ∈ (:negctrl, :ctrl) ? pop!(control_qubits) : -1
-        for (ii, ix) in enumerate(ixs)
-            exp      = ix.exponent
-            targets  = ix.targets
-            controls = ix.controls
-            if head(mod) == :pow
-                exp *= mod.args[1]
-            elseif head(mod) == :inv
-                exp *= -1
-            elseif head(mod) ∈ (:negctrl, :ctrl) # need to handle "extra" target
+        if head(mod) ∈ (:negctrl, :ctrl)
+            control_qubit = pop!(control_qubits)
+            for (ii, ix) in enumerate(ixs)
+                exp      = ix.exponent
+                targets  = ix.targets
+                controls = ix.controls
                 bit = head(mod) == :ctrl ? 1 : 0
                 controls = pushfirst!(controls, control_qubit=>bit)
                 if !is_gphase
                     targets  = pushfirst!(targets, control_qubit)
                 end
+                ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=targets, controls=controls, exponent=exp)
             end
-            ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=targets, controls=controls, exponent=exp)
+        elseif head(mod) == :inv
+            reverse!(ixs)
+            for (ii, ix) in enumerate(ixs)
+                ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=ix.targets, controls=ix.controls, exponent=-ix.exponent)
+            end
+        elseif head(mod) == :pow
+            pow_exp = mod.args[1]
+            (isinteger(pow_exp) || length(ixs) == 1) || throw(QasmVisitorError("can't apply a non-integer exponent to a gate of multiple instructions")) # can't do 2.5 for a list... yet
+            if length(ixs) > 1
+                pow_exp < 0 && reverse!(ixs)
+                ixs = repeat(ixs, abs(pow_exp))
+            else
+                ixs[1] = (type=ixs[1].type, arguments=ixs[1].arguments, targets=ixs[1].targets, controls=ixs[1].controls, exponent=ixs[1].exponent*pow_exp)
+            end
         end
-        head(mod) == :inv && reverse!(ixs)
     end
     return ixs
 end
@@ -441,12 +450,13 @@ function visit_gate_call(v::AbstractVisitor, program_expr::QasmExpression)
     gate_def_v       = QasmGateDefVisitor(v, gate_def.arguments, provided_args, gate_def.qubit_targets)
     gate_def_v(deepcopy(gate_def.body))
     gate_ixs         = instructions(gate_def_v)
+    # generate instruction list based on provided arguments to gate
     applied_arguments = process_gate_arguments(v, gate_name, gate_def.arguments, provided_args, gate_ixs)
-    
     gate_targets, control_qubits, n_called_with, modifier_remap = process_gate_targets(v, program_expr, gate_def)
-    for ii in 1:length(applied_arguments) # first apply any needed control qubits to the entire, shuffling targets
+    for ii in 1:length(applied_arguments) # first apply any needed control qubits to the entire gate, shuffling targets
         applied_arguments[ii] = remap(applied_arguments[ii], modifier_remap)
     end
+    # go through individual instructions, applying the modifiers to each argument
     applied_arguments     = handle_gate_modifiers(applied_arguments, mods, control_qubits, false)
     longest, gate_targets = splat_gate_targets(gate_targets)
     for splatted_ix in 1:longest # then splat if necessary
