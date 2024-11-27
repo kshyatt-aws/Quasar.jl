@@ -601,12 +601,10 @@ function (v::AbstractVisitor)(program_expr::QasmExpression)
         all_cases  = convert(Vector{QasmExpression}, program_expr.args[2:end])
         default    = findfirst(expr->head(expr) == :default, all_cases)
         case_found = false
-        for case in all_cases
-            if head(case) == :case && case_val ∈ v(case.args[1])
-                case_found = true
-                foreach(v, convert(Vector{QasmExpression}, case.args[2:end]))
-                break
-            end
+        for case in filter(case->head(case) == :case && case_val ∈ v(case.args[1]), all_cases)
+            case_found = true
+            foreach(v, convert(Vector{QasmExpression}, case.args[2:end]))
+            break
         end
         if !case_found
             isnothing(default) && throw(QasmVisitorError("no case matched and no default defined."))
