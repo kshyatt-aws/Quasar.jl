@@ -362,32 +362,32 @@ function process_gate_arguments(v::AbstractVisitor, gate_name::String, defined_a
         def_has_arguments && throw(QasmVisitorError("gate $gate_name requires arguments but none were provided.")) 
         call_has_arguments && throw(QasmVisitorError("gate $gate_name does not accept arguments but arguments were provided."))
     end
-    if def_has_arguments
-        evaled_args     = v(called_arguments)
-        argument_values = Dict{Symbol, Real}(Symbol(arg_name)=>argument for (arg_name, argument) in zip(defined_arguments, evaled_args))
-        return map(ix->bind_arguments!(ix, argument_values), gate_body)
-    else
-        return deepcopy(gate_body)
-    end
+    !def_has_arguments && return deepcopy(gate_body) # deep copy to avoid overwriting canonical definition
+
+    evaled_args     = v(called_arguments)
+    argument_values = Dict{Symbol, Real}(Symbol(arg_name)=>argument for (arg_name, argument) in zip(defined_arguments, evaled_args))
+    return map(ix->bind_arguments!(ix, argument_values), gate_body)
 end
 
 function handle_gate_modifiers(ixs, mods::Vector{QasmExpression}, control_qubits::Vector{Int}, is_gphase::Bool)
     for mod in Iterators.reverse(mods)
         control_qubit = head(mod) ∈ (:negctrl, :ctrl) ? pop!(control_qubits) : -1
         for (ii, ix) in enumerate(ixs)
+            exp      = ix.exponent
+            targets  = ix.targets
+            controls = ix.controls
             if head(mod) == :pow
-                ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=ix.targets, controls=ix.controls, exponent=ix.exponent*mod.args[1])
+                exp *= mod.args[1]
             elseif head(mod) == :inv
-                ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=ix.targets, controls=ix.controls, exponent=-ix.exponent)
-            # need to handle "extra" target
-            elseif head(mod) ∈ (:negctrl, :ctrl)
+                exp *= -1
+            elseif head(mod) ∈ (:negctrl, :ctrl) # need to handle "extra" target
                 bit = head(mod) == :ctrl ? 1 : 0
-                if is_gphase
-                    ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=ix.targets, controls=pushfirst!(ix.controls, control_qubit=>bit), exponent=ix.exponent)
-                else
-                    ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=pushfirst!(ix.targets, control_qubit), controls=pushfirst!(ix.controls, control_qubit=>bit), exponent=ix.exponent)
+                controls = pushfirst!(controls, control_qubit=>bit)
+                if !is_gphase
+                    targets  = pushfirst!(targets, control_qubit)
                 end
             end
+            ixs[ii] = (type=ix.type, arguments=ix.arguments, targets=targets, controls=controls, exponent=exp)
         end
         head(mod) == :inv && reverse!(ixs)
     end
@@ -399,10 +399,8 @@ function splat_gate_targets(gate_targets::Vector{Vector{Int}})
     longest = maximum(target_lengths)
     must_splat::Bool = any(len->len!=1 || len != longest, target_lengths)
     !must_splat && return longest, gate_targets
-    for target_ix in 1:length(gate_targets)
-        if target_lengths[target_ix] == 1
-            append!(gate_targets[target_ix], fill(only(gate_targets[target_ix]), longest-1))
-        end
+    for target_ix in filter(ix->target_lengths[ix] == 1, 1:length(gate_targets))
+        append!(gate_targets[target_ix], fill(only(gate_targets[target_ix]), longest-1))
     end
     return longest, gate_targets
 end
