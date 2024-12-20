@@ -126,7 +126,7 @@ mutable struct QasmGateDefVisitor <: AbstractVisitor
             qubit_mapping[gate_qubits[ix+1] * "[0]"] = [ix]
         end
         v = new(parent,
-                deepcopy(classical_defs(parent)),
+                classical_defs(parent),
                 qubit_defs,
                 qubit_mapping,
                 length(gate_qubits),
@@ -160,8 +160,8 @@ mutable struct QasmFunctionVisitor <: AbstractVisitor
     function QasmFunctionVisitor(parent::AbstractVisitor, declared_arguments::Vector{QasmExpression}, provided_arguments::Vector{QasmExpression})
         v = new(parent, 
             classical_defs(parent),
-            deepcopy(parent.qubit_defs),
-            deepcopy(parent.qubit_mapping),
+            parent.qubit_defs,
+            parent.qubit_mapping,
             qubit_count(parent),
             CircuitInstruction[],
            )
@@ -335,7 +335,7 @@ _evaluate_qubits(::Val{:hw_qubit}, v, qubit_expr::QasmExpression)::Vector{Int} =
 _evaluate_qubits(val, v, qubit_expr) = throw(QasmVisitorError("unable to evaluate qubits for expression $qubit_expr."))
 
 function evaluate_qubits(v::AbstractVisitor, qubit_targets::Vector)::Vector{Int}
-    final_qubits = map(qubit_expr->_evaluate_qubits(Val(head(qubit_expr)), v, qubit_expr), qubit_targets)
+    final_qubits = Iterators.map(qubit_expr->_evaluate_qubits(Val(head(qubit_expr)), v, qubit_expr), qubit_targets)
     return vcat(final_qubits...)
 end
 evaluate_qubits(v::AbstractVisitor, qubit_targets::QasmExpression) = evaluate_qubits(v::AbstractVisitor, [qubit_targets])
@@ -358,7 +358,7 @@ function process_gate_arguments(v::AbstractVisitor, gate_name::String, defined_a
         def_has_arguments  && throw(QasmVisitorError("gate $gate_name requires arguments but none were provided.")) 
         call_has_arguments && throw(QasmVisitorError("gate $gate_name does not accept arguments but arguments were provided."))
     end
-    !def_has_arguments && return deepcopy(gate_body) # deep copy to avoid overwriting canonical definition
+    !def_has_arguments && return gate_body
 
     evaled_args     = v(called_arguments)
     argument_values = Dict{Symbol, Real}(Symbol(arg_name)=>argument for (arg_name, argument) in zip(defined_arguments, evaled_args))
@@ -441,13 +441,18 @@ end
 
 function visit_gate_call(v::AbstractVisitor, program_expr::QasmExpression)
     gate_name        = name(program_expr)::String
-    provided_args    = isempty(program_expr.args[2].args) ? QasmExpression(:empty) : only(program_expr.args[2].args)::QasmExpression
+    expr_args        = convert(Vector{QasmExpression}, program_expr.args[2].args)
+    provided_args    = isempty(expr_args) ? QasmExpression(:empty) : only(expr_args)::QasmExpression
     has_modifiers    = length(program_expr.args) == 4
     mods::Vector{QasmExpression} = has_modifiers ? convert(Vector{QasmExpression}, program_expr.args[4].args) : QasmExpression[]
     hasgate(v, gate_name) || throw(QasmVisitorError("gate $gate_name not defined!"))
     gate_def         = gate_defs(v)[gate_name]
     gate_def_v       = QasmGateDefVisitor(v, gate_def.arguments, provided_args, gate_def.qubit_targets)
-    gate_def_v(deepcopy(gate_def.body))
+    if gate_def.body isa QasmExpression
+        gate_def_v(deepcopy(gate_def.body))
+    else
+        gate_def_v(gate_def.body)
+    end
     gate_ixs         = instructions(gate_def_v)
     # generate instruction list based on provided arguments to gate
     applied_arguments = process_gate_arguments(v, gate_name, gate_def.arguments, provided_args, gate_ixs)
