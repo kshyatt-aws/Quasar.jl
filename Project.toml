@@ -1,7 +1,7 @@
 name = "Quasar"
 uuid = "86e06105-936e-439e-acf0-7687560b0bd9"
 authors = ["Katharine Hyatt <hyatkath@amazon.com> and contributors"]
-version = "0.0.1"
+version = "0.0.2"
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
