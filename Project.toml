@@ -1,7 +1,7 @@
 name = "Quasar"
 uuid = "86e06105-936e-439e-acf0-7687560b0bd9"
 authors = ["Katharine Hyatt <hyatkath@amazon.com> and contributors"]
-version = "0.0.2"
+version = "0.0.3"
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
@@ -14,7 +14,7 @@ PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 AbstractTrees = "0.4.5"
 Aqua = "0.8"
 Automa = "1.0.4"
-DataStructures = "0.18.20"
+DataStructures = "0.18.20, 0.19"
 Dates = "1"
 LinearAlgebra = "1"
 PrecompileTools = "1.2.1"
